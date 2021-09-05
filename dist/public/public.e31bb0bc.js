@@ -42353,7 +42353,6 @@ var peerConnectionConstraints = {
     'DtlsSrtpKeyAgreement': true
   }]
 };
-var sdpConstraints = {};
 var mediaConstraints = {
   video: true,
   audio: false
@@ -42364,21 +42363,27 @@ var Connection = function Connection() {
 
   _classCallCheck(this, Connection);
 
-  _defineProperty(this, "peerConnection", null);
+  _defineProperty(this, "peerConnection", new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints));
 
-  _defineProperty(this, "socket", null);
+  _defineProperty(this, "socket", io());
 
   _defineProperty(this, "roomId", 'test');
 
-  _defineProperty(this, "remoteVideoStream", new MediaStream());
+  _defineProperty(this, "unIdentifiedStreams", []);
 
-  _defineProperty(this, "localVideoStream", new MediaStream());
-
-  _defineProperty(this, "remoteScreenStream", new MediaStream());
-
-  _defineProperty(this, "localScreenStream", new MediaStream());
+  _defineProperty(this, "streamId2Content", {});
 
   _defineProperty(this, "initializeSocketEvents", function () {
+    _this.socket.on('connect', function () {
+      console.log("socket connected:".concat(_this.socket.connected));
+
+      _this.socket.emit('join-room', _this.roomId);
+    });
+
+    _this.socket.on("connect_error", function (err) {
+      console.log("connect_error due to ".concat(err.message));
+    });
+
     _this.socket.on('created', function (roomId) {
       console.log('room created');
       _this.roomId = roomId;
@@ -42390,7 +42395,7 @@ var Connection = function Connection() {
     });
 
     _this.socket.on('full', function () {
-      console.log('the room was full, close other window');
+      console.log('the room was full, close a window');
     });
 
     _this.socket.on('message', function (message) {
@@ -42398,25 +42403,15 @@ var Connection = function Connection() {
         console.log('received offer');
 
         _this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer)).then(function () {
-          return navigator.mediaDevices.getUserMedia(mediaConstraints);
-        }).then(function (stream) {
-          stream.getVideoTracks().forEach(function (track) {
-            _this.localVideoStream.addTrack(track);
-
-            _this.peerConnection.addTrack(track);
-          }); //TODO: send id of tracks through signalling channel to distinguish between screen and video
-
-          _this.attachStreamToHtml('local-camera-container', _this.localVideoStream);
+          return _this.startLocalCamera();
         }).then(function () {
           return _this.peerConnection.createAnswer();
         }).then(function (answer) {
           return _this.peerConnection.setLocalDescription(answer);
         }).then(function () {
-          console.log("sending answer");
-
-          _this.socket.emit('message', {
+          _this.sendSignallingMessage({
             'answer': _this.peerConnection.localDescription
-          }, _this.roomId);
+          });
         }).catch(function (err) {
           console.log("signalling answer failed: ".concat(err));
         });
@@ -42431,19 +42426,46 @@ var Connection = function Connection() {
         _this.peerConnection.addIceCandidate(iceCandidate).catch(function (err) {
           console.log("adding ice candidate failed ".concat(err));
         });
-      }
-    }); //when both have joined we initiate peer connection setup
+      } else if (message.webcam) {
+        if (message.webcam in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
+          return ms.id;
+        }).includes(message.webcam)) {
+          var remoteCameraStream = _this.unIdentifiedStreams.find(function (ms) {
+            return ms.id === message.webcam;
+          });
 
+          _this.unIdentifiedStreams.filter(function (ms) {
+            return ms.id !== message.webcam;
+          });
+
+          _this.attachStreamToHtml('remote-camera-container', remoteCameraStream);
+        } else {
+          _this.streamId2Content[message.webcam] = 'webcam';
+        }
+      } else if (message.screenShare) {
+        if (message.screenShare in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
+          return ms.id;
+        }).includes(message.screenShare)) {
+          var remoteScreenStream = _this.unIdentifiedStreams.find(function (ms) {
+            return ms.id === message.screenShare;
+          });
+
+          _this.unIdentifiedStreams.filter(function (ms) {
+            return ms.id !== message.screenShare;
+          });
+
+          _this.attachStreamToHtml('remote-screen-container', remoteScreenStream);
+        } else {
+          _this.streamId2Content[message.screenShare] = 'screenShare';
+        }
+      }
+    });
 
     _this.socket.on('joined', function (roomId) {
-      navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
-        stream.getVideoTracks().forEach(function (track) {
-          _this.localVideoStream.addTrack(track);
-
-          _this.peerConnection.addTrack(track);
+      _this.startLocalCamera().then(function (camera) {
+        _this.sendSignallingMessage({
+          'webcam': camera
         });
-
-        _this.attachStreamToHtml('local-camera-container', _this.localVideoStream);
       }).catch(function (err) {
         console.log("adding local video failed: ".concat(err));
       });
@@ -42453,8 +42475,6 @@ var Connection = function Connection() {
   _defineProperty(this, "initializePeerEventHandlers", function () {
     // Can also inherit from track event to separate between screen share and camera I think
     _this.peerConnection.addEventListener('icecandidate', function (event) {
-      console.log("handling ice candidate event");
-
       if (event.candidate) {
         _this.socket.emit('message', {
           iceCandidate: event.candidate
@@ -42462,8 +42482,7 @@ var Connection = function Connection() {
       } else {
         console.log('End of ice candidates');
       }
-    }); // when peers are connected we start sending video
-
+    });
 
     _this.peerConnection.addEventListener('connectionstatechange', function (event) {
       console.log("handling connectionstatechange event");
@@ -42476,11 +42495,23 @@ var Connection = function Connection() {
     });
 
     _this.peerConnection.addEventListener('track', function (event) {
-      console.log('Handling track event');
+      var newStream = event.streams[0];
 
-      _this.remoteVideoStream.addTrack(event.track);
+      if (newStream.id in _this.streamId2Content) {
+        if (_this.streamId2Content[newStream.id] === 'webcam') {
+          _this.attachStreamToHtml('remote-camera-container', newStream);
+        } else if (_this.streamId2Content[newStream.id] === 'screenShare') {
+          _this.attachStreamToHtml('remote-screen-container', newStream);
+        } else {
+          console.log('invalid id mapping for new stream');
+        }
 
-      _this.attachStreamToHtml('remote-screen-container', _this.remoteVideoStream);
+        delete _this.streamId2Content[newStream.id];
+      } else {
+        console.log('received unidentified track');
+
+        _this.unIdentifiedStreams.push(newStream);
+      }
     });
 
     _this.peerConnection.addEventListener('icegatheringstatechange', function (event) {
@@ -42497,8 +42528,6 @@ var Connection = function Connection() {
       _this.peerConnection.createOffer().then(function (offer) {
         return _this.peerConnection.setLocalDescription(offer);
       }).then(function () {
-        console.log("sending offer");
-
         _this.socket.emit('message', {
           'offer': _this.peerConnection.localDescription
         }, _this.roomId);
@@ -42513,32 +42542,37 @@ var Connection = function Connection() {
     videoContainer.srcObject = stream;
   });
 
-  _defineProperty(this, "startScreenShare", function () {
-    navigator.mediaDevices.getDisplayMedia(mediaConstraints).then(function (stream) {
-      stream.getVideoTracks().forEach(function (track) {
-        _this.localVideoStream.addTrack(track);
+  _defineProperty(this, "startLocalScreenShare", function () {
+    //TODO: firefox struggles with this
+    return navigator.mediaDevices.getDisplayMedia(mediaConstraints).then(function (stream) {
+      _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
 
-        _this.peerConnection.addTrack(track);
-      }); //TODO: send id of tracks through signalling channel to distinguish between screen and video
+      _this.attachStreamToHtml('local-screen-container', stream);
 
-      _this.attachStreamToHtml('local-screen-container', _this.localVideoStream);
-    }).catch(function (err) {
-      console.log("unable to acquire screen capture: ".concat(err));
+      _this.sendSignallingMessage({
+        'screenShare': stream.id
+      });
     });
   });
 
-  this.peerConnection = new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints);
-  this.initializePeerEventHandlers();
-  this.socket = io();
-  this.initializeSocketEvents();
-  this.socket.on('connect', function () {
-    console.log("socket connected:".concat(_this.socket.connected));
+  _defineProperty(this, "startLocalCamera", function () {
+    return navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
+      _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
 
-    _this.socket.emit('join-room', _this.roomId);
+      _this.attachStreamToHtml('local-camera-container', stream);
+
+      _this.sendSignallingMessage({
+        'webcam': stream.id
+      });
+    });
   });
-  this.socket.on("connect_error", function (err) {
-    console.log("connect_error due to ".concat(err.message));
+
+  _defineProperty(this, "sendSignallingMessage", function (message) {
+    _this.socket.emit('message', message, _this.roomId);
   });
+
+  this.initializePeerEventHandlers();
+  this.initializeSocketEvents();
 } // Signaling server interaction 
 // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
 ;
@@ -42549,7 +42583,7 @@ function createSocketConnectionInstance() {
 }
 
 function enableScreenShare(connectionObj) {
-  connectionObj.startScreenShare();
+  connectionObj.startLocalScreenShare();
 }
 },{"webrtc-adapter":"../../node_modules/webrtc-adapter/src/js/adapter_core.js","socket.io-client":"../../node_modules/socket.io-client/build/index.js"}],"room-component.js":[function(require,module,exports) {
 "use strict";
@@ -42577,17 +42611,17 @@ var RoomComponent = function RoomComponent(props) {
     socketInstance.current = (0, _connection.createSocketConnectionInstance)();
   };
 
-  return /*#__PURE__*/_react.default.createElement(_react.default.Fragment, null, /*#__PURE__*/_react.default.createElement("table", null, /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
+  return /*#__PURE__*/_react.default.createElement(_react.default.Fragment, null, /*#__PURE__*/_react.default.createElement("table", null, /*#__PURE__*/_react.default.createElement("tbody", null, /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
     id: "local-camera-container",
     autoPlay: true,
     width: "640",
     height: "480"
   }), /*#__PURE__*/_react.default.createElement("div", null, "Local video"))), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
-    id: "remote-screen-container",
+    id: "remote-camera-container",
     autoPlay: true,
     width: "640",
     height: "480"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote screen")))), /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote camera")))), /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
     id: "local-screen-container",
     autoPlay: true,
     width: "640",
@@ -42597,11 +42631,11 @@ var RoomComponent = function RoomComponent(props) {
       return (0, _connection.enableScreenShare)(socketInstance.current);
     }
   }, "Start screen share"))), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
-    id: "remote-camera-container",
+    id: "remote-screen-container",
     autoPlay: true,
     width: "640",
     height: "480"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote camera"))))));
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote screen")))))));
 };
 
 var _default = RoomComponent;
@@ -42715,7 +42749,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "46343" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "44221" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

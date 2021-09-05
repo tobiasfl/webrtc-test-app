@@ -12,27 +12,23 @@ const peerConnectionConstraints = {
     ]
 };
 
-const sdpConstraints = {};
-
 const mediaConstraints = {video: true, audio: false};
 
 class Connection {
-    peerConnection = null;
-    socket = null;
+    peerConnection = new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints);
+    socket = io();
     roomId = 'test';
-    remoteVideoStream = new MediaStream();
-    localVideoStream = new MediaStream();
-    remoteScreenStream = new MediaStream();
-    localScreenStream = new MediaStream();
+    unIdentifiedStreams = [];
+    streamId2Content = {}
 
     constructor() {
-        this.peerConnection = new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints);
-
         this.initializePeerEventHandlers();
-
-        this.socket = io();
         this.initializeSocketEvents();
+    }
 
+    // Signaling server interaction 
+    // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
+    initializeSocketEvents = () => {
         this.socket.on('connect', () => {
             console.log(`socket connected:${this.socket.connected}`);
             this.socket.emit('join-room', this.roomId);
@@ -40,13 +36,8 @@ class Connection {
 
         this.socket.on("connect_error", (err) => {
             console.log(`connect_error due to ${err.message}`);
-          });
+        });
 
-    }
-
-    // Signaling server interaction 
-    // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
-    initializeSocketEvents = () => {
         this.socket.on('created', (roomId) => {
             console.log('room created');
 
@@ -58,7 +49,7 @@ class Connection {
             this.roomId = roomId;
         });
         this.socket.on('full', () => {
-            console.log('the room was full, close other window');
+            console.log('the room was full, close a window');
         });
         this.socket.on('message', (message) => {
             if (message.offer) {
@@ -66,15 +57,7 @@ class Connection {
 
                 this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer))
                     .then(() => {
-                        return navigator.mediaDevices.getUserMedia(mediaConstraints);
-                    })
-                    .then(stream => {
-                        stream.getVideoTracks().forEach(track => {
-                            this.localVideoStream.addTrack(track);
-                            this.peerConnection.addTrack(track);
-                        });
-                        //TODO: send id of tracks through signalling channel to distinguish between screen and video
-                        this.attachStreamToHtml('local-camera-container', this.localVideoStream);
+                        return this.startLocalCamera();
                     })
                     .then(() => {
                         return this.peerConnection.createAnswer();
@@ -83,8 +66,7 @@ class Connection {
                         return this.peerConnection.setLocalDescription(answer);
                     })
                     .then(() => {
-                        console.log("sending answer");
-                        this.socket.emit('message', {'answer':this.peerConnection.localDescription}, this.roomId);
+                        this.sendSignallingMessage({'answer':this.peerConnection.localDescription});
                     })
                     .catch(err => {
                         console.log(`signalling answer failed: ${err}`);
@@ -103,17 +85,34 @@ class Connection {
                         console.log(`adding ice candidate failed ${err}`);
                     });
             }
+            else if (message.webcam) {
+                if(message.webcam in this.streamId2Content && this.unIdentifiedStreams.map(ms => ms.id).includes(message.webcam)) {
+                    const remoteCameraStream = this.unIdentifiedStreams.find(ms => ms.id === message.webcam);
+
+                    this.unIdentifiedStreams.filter(ms => ms.id !== message.webcam);
+                    this.attachStreamToHtml('remote-camera-container', remoteCameraStream);
+                }
+                else {
+                    this.streamId2Content[message.webcam] = 'webcam';
+                }
+            }
+            else if (message.screenShare) {
+                if(message.screenShare in this.streamId2Content && this.unIdentifiedStreams.map(ms => ms.id).includes(message.screenShare)) {
+                    const remoteScreenStream = this.unIdentifiedStreams.find(ms => ms.id === message.screenShare);
+
+                    this.unIdentifiedStreams.filter(ms => ms.id !== message.screenShare);
+                    this.attachStreamToHtml('remote-screen-container', remoteScreenStream);
+                }
+                else {
+                    this.streamId2Content[message.screenShare] = 'screenShare';
+                }
+            }
         });
 
-        //when both have joined we initiate peer connection setup
         this.socket.on('joined', (roomId) => {
-            navigator.mediaDevices.getUserMedia(mediaConstraints)
-                .then(stream => {
-                    stream.getVideoTracks().forEach(track => {
-                        this.localVideoStream.addTrack(track);
-                        this.peerConnection.addTrack(track);
-                    });
-                    this.attachStreamToHtml('local-camera-container', this.localVideoStream);
+            this.startLocalCamera()
+                .then(camera => {
+                    this.sendSignallingMessage({'webcam':camera});
                 })
                 .catch(err =>  {
                     console.log(`adding local video failed: ${err}`);
@@ -124,7 +123,6 @@ class Connection {
     initializePeerEventHandlers = () => {
         // Can also inherit from track event to separate between screen share and camera I think
         this.peerConnection.addEventListener('icecandidate', event => {
-            console.log("handling ice candidate event");
             if (event.candidate) {
                 this.socket.emit('message', {iceCandidate: event.candidate}, this.roomId);
             }
@@ -133,7 +131,6 @@ class Connection {
             }
         });
 
-        // when peers are connected we start sending video
         this.peerConnection.addEventListener('connectionstatechange', event => {
             console.log("handling connectionstatechange event");
             if (this.peerConnection.connectionState === 'connected') {
@@ -147,10 +144,24 @@ class Connection {
         });
 
         this.peerConnection.addEventListener('track', event => {
-            console.log('Handling track event');
-
-            this.remoteVideoStream.addTrack(event.track);
-            this.attachStreamToHtml('remote-screen-container', this.remoteVideoStream);
+            const newStream = event.streams[0];
+            if(newStream.id in this.streamId2Content) {
+                if (this.streamId2Content[newStream.id] === 'webcam')
+                {
+                    this.attachStreamToHtml('remote-camera-container', newStream);
+                }
+                else if (this.streamId2Content[newStream.id] === 'screenShare') {
+                    this.attachStreamToHtml('remote-screen-container', newStream);
+                }
+                else {
+                    console.log('invalid id mapping for new stream');
+                }
+                delete this.streamId2Content[newStream.id];
+            }
+            else {
+                console.log('received unidentified track');
+                this.unIdentifiedStreams.push(newStream);
+            }
         });
 
         this.peerConnection.addEventListener('icegatheringstatechange', event => {
@@ -168,7 +179,6 @@ class Connection {
                     return this.peerConnection.setLocalDescription(offer);
                 })
                 .then(() => {
-                    console.log("sending offer");
                     this.socket.emit('message', {'offer': this.peerConnection.localDescription}, this.roomId);
                 })
                 .catch(err =>  {
@@ -182,19 +192,27 @@ class Connection {
         videoContainer.srcObject = stream;    
     }
 
-    startScreenShare = () => {
-        navigator.mediaDevices.getDisplayMedia(mediaConstraints)
+    startLocalScreenShare = () => {
+        //TODO: firefox struggles with this
+        return navigator.mediaDevices.getDisplayMedia(mediaConstraints)
             .then(stream => {
-                stream.getVideoTracks().forEach(track => {
-                    this.localVideoStream.addTrack(track);
-                    this.peerConnection.addTrack(track);
-                });
-                //TODO: send id of tracks through signalling channel to distinguish between screen and video
-                this.attachStreamToHtml('local-screen-container', this.localVideoStream);
-            })
-            .catch(err => {
-                console.log(`unable to acquire screen capture: ${err}`);
+                this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
+                this.attachStreamToHtml('local-screen-container', stream);
+                this.sendSignallingMessage({'screenShare': stream.id})
             });
+    }
+
+    startLocalCamera = () => {
+        return navigator.mediaDevices.getUserMedia(mediaConstraints)
+            .then(stream => {
+                this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
+                this.attachStreamToHtml('local-camera-container', stream);
+                this.sendSignallingMessage({'webcam': stream.id});
+            });
+    }
+
+    sendSignallingMessage = (message) => {
+        this.socket.emit('message', message, this.roomId);
     }
 }
 
@@ -203,7 +221,7 @@ function createSocketConnectionInstance(settings={}) {
 }
 
 function enableScreenShare(connectionObj) {
-    connectionObj.startScreenShare();
+    connectionObj.startLocalScreenShare();
 }
 
 export { createSocketConnectionInstance, enableScreenShare }
