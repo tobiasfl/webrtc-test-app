@@ -42365,6 +42365,8 @@ var Connection = function Connection() {
 
   _defineProperty(this, "peerConnection", new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints));
 
+  _defineProperty(this, "peerConnection2", new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints));
+
   _defineProperty(this, "socket", io());
 
   _defineProperty(this, "roomId", 'test');
@@ -42399,102 +42401,46 @@ var Connection = function Connection() {
     });
 
     _this.socket.on('message', function (message) {
-      if (message.offer) {
-        console.log('received offer');
+      console.log('HANDLING MSG 1');
 
-        _this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer)).then(function () {
-          return _this.startLocalCamera();
-        }).then(function () {
-          return _this.peerConnection.createAnswer();
-        }).then(function (answer) {
-          return _this.peerConnection.setLocalDescription(answer);
-        }).then(function () {
-          _this.sendSignallingMessage({
-            'answer': _this.peerConnection.localDescription
-          });
-        }).catch(function (err) {
-          console.log("signalling answer failed: ".concat(err));
-        });
-      } else if (message.answer) {
-        console.log('received answer');
+      _this.handleMessage(_this.peerConnection, message, true, _this.sendSignallingMessage);
+    });
 
-        _this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
-      } else if (message.iceCandidate) {
-        console.log('received candidate');
-        var iceCandidate = message.iceCandidate;
+    _this.socket.on('message2', function (message) {
+      console.log('HANDLING MSG 2');
 
-        _this.peerConnection.addIceCandidate(iceCandidate).catch(function (err) {
-          console.log("adding ice candidate failed ".concat(err));
-        });
-      } else if (message.webcam) {
-        if (message.webcam in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
-          return ms.id;
-        }).includes(message.webcam)) {
-          var remoteCameraStream = _this.unIdentifiedStreams.find(function (ms) {
-            return ms.id === message.webcam;
-          });
-
-          _this.unIdentifiedStreams.filter(function (ms) {
-            return ms.id !== message.webcam;
-          });
-
-          _this.attachStreamToHtml('remote-camera-container', remoteCameraStream);
-        } else {
-          _this.streamId2Content[message.webcam] = 'webcam';
-        }
-      } else if (message.screenShare) {
-        if (message.screenShare in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
-          return ms.id;
-        }).includes(message.screenShare)) {
-          var remoteScreenStream = _this.unIdentifiedStreams.find(function (ms) {
-            return ms.id === message.screenShare;
-          });
-
-          _this.unIdentifiedStreams.filter(function (ms) {
-            return ms.id !== message.screenShare;
-          });
-
-          _this.attachStreamToHtml('remote-screen-container', remoteScreenStream);
-        } else {
-          _this.streamId2Content[message.screenShare] = 'screenShare';
-        }
-      }
+      _this.handleMessage(_this.peerConnection2, message, false, _this.sendSignallingMessage2);
     });
 
     _this.socket.on('joined', function (roomId) {
-      _this.startLocalCamera().then(function (camera) {
-        _this.sendSignallingMessage({
-          'webcam': camera
-        });
-      }).catch(function (err) {
+      _this.startLocalCamera().catch(function (err) {
         console.log("adding local video failed: ".concat(err));
       });
     });
   });
 
-  _defineProperty(this, "initializePeerEventHandlers", function () {
-    // Can also inherit from track event to separate between screen share and camera I think
-    _this.peerConnection.addEventListener('icecandidate', function (event) {
+  _defineProperty(this, "initializePeerEventHandlers", function (pc, sendMessageFunc) {
+    pc.onicecandidate = function (event) {
       if (event.candidate) {
-        _this.socket.emit('message', {
+        sendMessageFunc({
           iceCandidate: event.candidate
-        }, _this.roomId);
+        });
       } else {
         console.log('End of ice candidates');
       }
-    });
+    };
 
-    _this.peerConnection.addEventListener('connectionstatechange', function (event) {
+    pc.onconnectionstatechange = function (event) {
       console.log("handling connectionstatechange event");
 
-      if (_this.peerConnection.connectionState === 'connected') {
+      if (pc.connectionState === 'connected') {
         console.log('RTCPeerConnection is connected');
-      } else if (_this.peerConnection.connectionState === 'failed' || _this.peerConnection.connectionState === 'closed' || _this.peerConnection.connectionState === 'disconnected') {
+      } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
         console.log('peer connection failed, closed or disconnected');
       }
-    });
+    };
 
-    _this.peerConnection.addEventListener('track', function (event) {
+    pc.ontrack = function (event) {
       var newStream = event.streams[0];
 
       if (newStream.id in _this.streamId2Content) {
@@ -42512,29 +42458,27 @@ var Connection = function Connection() {
 
         _this.unIdentifiedStreams.push(newStream);
       }
-    });
+    };
 
-    _this.peerConnection.addEventListener('icegatheringstatechange', function (event) {
+    pc.onicegatheringstatechange = function (event) {
       console.log("change in ice gathering state: ".concat(event.target.iceGatheringState));
-    });
+    };
 
-    _this.peerConnection.addEventListener('icecandidateerror', function (event) {
+    pc.onicecandidateerror = function (event) {
       console.log("ice candidate error, code:".concat(event.errorCode, " text:").concat(event.errorText));
-    });
+    };
 
-    _this.peerConnection.addEventListener('negotiationneeded', function (event) {
-      console.log("negotation needed event fired");
-
-      _this.peerConnection.createOffer().then(function (offer) {
-        return _this.peerConnection.setLocalDescription(offer);
+    pc.onnegotiationneeded = function (event) {
+      pc.createOffer().then(function (offer) {
+        return pc.setLocalDescription(offer);
       }).then(function () {
-        _this.socket.emit('message', {
-          'offer': _this.peerConnection.localDescription
-        }, _this.roomId);
+        sendMessageFunc({
+          'offer': pc.localDescription
+        });
       }).catch(function (err) {
         console.log("signalling offer failed: ".concat(err));
       });
-    });
+    };
   });
 
   _defineProperty(this, "attachStreamToHtml", function (elementId, stream) {
@@ -42545,11 +42489,11 @@ var Connection = function Connection() {
   _defineProperty(this, "startLocalScreenShare", function () {
     //TODO: firefox struggles with this
     return navigator.mediaDevices.getDisplayMedia(mediaConstraints).then(function (stream) {
-      _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
+      _this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
 
       _this.attachStreamToHtml('local-screen-container', stream);
 
-      _this.sendSignallingMessage({
+      _this.sendSignallingMessage2({
         'screenShare': stream.id
       });
     });
@@ -42568,10 +42512,81 @@ var Connection = function Connection() {
   });
 
   _defineProperty(this, "sendSignallingMessage", function (message) {
+    console.log("SENDING MSG 1");
+
     _this.socket.emit('message', message, _this.roomId);
   });
 
-  this.initializePeerEventHandlers();
+  _defineProperty(this, "sendSignallingMessage2", function (message) {
+    console.log("SENDING MSG 2");
+
+    _this.socket.emit('message2', message, _this.roomId);
+  });
+
+  _defineProperty(this, "handleMessage", function (pc, message, canStartWebCam, sendMessageFunc) {
+    if (message.offer) {
+      console.log('received offer');
+      pc.setRemoteDescription(new RTCSessionDescription(message.offer)).then(function () {
+        return canStartWebCam ? _this.startLocalCamera() : null;
+      }).then(function () {
+        return pc.createAnswer();
+      }).then(function (answer) {
+        return pc.setLocalDescription(answer);
+      }).then(function () {
+        sendMessageFunc({
+          'answer': pc.localDescription
+        });
+      }).catch(function (err) {
+        console.log("signalling answer failed: ".concat(err));
+      });
+    } else if (message.answer) {
+      console.log('received answer');
+      pc.setRemoteDescription(new RTCSessionDescription(message.answer));
+    } else if (message.iceCandidate) {
+      console.log('received candidate');
+      var iceCandidate = message.iceCandidate;
+      pc.addIceCandidate(iceCandidate).catch(function (err) {
+        console.log("adding ice candidate failed ".concat(err));
+      });
+    } else if (message.webcam) {
+      if (message.webcam in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
+        return ms.id;
+      }).includes(message.webcam)) {
+        var remoteCameraStream = _this.unIdentifiedStreams.find(function (ms) {
+          return ms.id === message.webcam;
+        });
+
+        _this.unIdentifiedStreams = _this.unIdentifiedStreams.filter(function (ms) {
+          return ms.id !== message.webcam;
+        });
+
+        _this.attachStreamToHtml('remote-camera-container', remoteCameraStream);
+      } else {
+        _this.streamId2Content[message.webcam] = 'webcam';
+      }
+    } else if (message.screenShare) {
+      console.log('got screen share message');
+
+      if (message.screenShare in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
+        return ms.id;
+      }).includes(message.screenShare)) {
+        var remoteScreenStream = _this.unIdentifiedStreams.find(function (ms) {
+          return ms.id === message.screenShare;
+        });
+
+        _this.unIdentifiedStreams = _this.unIdentifiedStreams.filter(function (ms) {
+          return ms.id !== message.screenShare;
+        });
+
+        _this.attachStreamToHtml('remote-screen-container', remoteScreenStream);
+      } else {
+        _this.streamId2Content[message.screenShare] = 'screenShare';
+      }
+    }
+  });
+
+  this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
+  this.initializePeerEventHandlers(this.peerConnection2, this.sendSignallingMessage2);
   this.initializeSocketEvents();
 } // Signaling server interaction 
 // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
@@ -42749,7 +42764,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "44221" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "34619" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

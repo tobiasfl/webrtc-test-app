@@ -25,6 +25,10 @@ io.on('connection', socket => {
         socket.to(roomId).emit('message', message);
     })
 
+    socket.on('message2', (message, roomId) => {
+        socket.to(roomId).emit('message2', message);
+    })
+
     socket.on('join-room', roomId => {
         console.log('new client joined room' + roomId);
 
@@ -57,5 +61,4 @@ io.on('connection', socket => {
 
 
 
-//module.exports = app;
 module.exports = server;

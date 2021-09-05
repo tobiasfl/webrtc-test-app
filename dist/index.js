@@ -139,6 +139,9 @@ io.on('connection', socket => {
   socket.on('message', (message, roomId) => {
     socket.to(roomId).emit('message', message);
   });
+  socket.on('message2', (message, roomId) => {
+    socket.to(roomId).emit('message2', message);
+  });
   socket.on('join-room', roomId => {
     console.log('new client joined room' + roomId);
     clientCount++;
@@ -161,8 +164,7 @@ io.on('connection', socket => {
     clientCount--;
     console.log(`a user disconnected, user remaining: ${clientCount}`);
   });
-}); //module.exports = app;
-
+});
 module.exports = server;
 },{}],"index.js":[function(require,module,exports) {
 const app = require('./app');
