@@ -1,2 +1,2 @@
 # webrtc-test-app
-Simple app for testing RTP flows in Webrtc for master thesis. 
+Simple app for testing RTP flows transporting video stream in Webrtc for master thesis. 
