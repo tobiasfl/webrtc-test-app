@@ -1,4 +1,4 @@
-import adapter from 'webrtc-adapter';
+const adapter =  require('webrtc-adapter');
 const io =  require('socket.io-client');
 
 const peerConnectionConfig = { iceServers: [{
@@ -32,7 +32,6 @@ class Connection {
     // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
     initializeSocketEvents = () => {
         this.socket.on('connect', () => {
-            console.log(`socket connected:${this.socket.connected}`);
             this.socket.emit('join-room', this.roomId);
         });
 
@@ -41,13 +40,9 @@ class Connection {
         });
 
         this.socket.on('created', (roomId) => {
-            console.log('room created');
-
             this.roomId = roomId;
         });
         this.socket.on('join', (roomId) => {
-            console.log('joining room');
-
             this.roomId = roomId;
         });
         this.socket.on('full', () => {
@@ -55,13 +50,11 @@ class Connection {
         });
 
         this.socket.on('message', message => {
-            console.log('HANDLING MSG 1')
-            this.handleMessage(this.peerConnection, message, true, this.sendSignallingMessage);
+            this.handleSignallingMessage(this.peerConnection, message, true, this.sendSignallingMessage);
         });
 
         this.socket.on('message2', message => {
-            console.log('HANDLING MSG 2')
-            this.handleMessage(this.peerConnection2, message, false, this.sendSignallingMessage2);
+            this.handleSignallingMessage(this.peerConnection2, message, false, this.sendSignallingMessage2);
         })
 
         this.socket.on('joined', (roomId) => {
@@ -83,7 +76,6 @@ class Connection {
         };
 
         pc.onconnectionstatechange = event => {
-            console.log("handling connectionstatechange event");
             if (pc.connectionState === 'connected') {
                 console.log('RTCPeerConnection is connected');
             }
@@ -110,7 +102,6 @@ class Connection {
                 delete this.streamId2Content[newStream.id];
             }
             else {
-                console.log('received unidentified track');
                 this.unIdentifiedStreams.push(newStream);
             }
         };
@@ -134,6 +125,18 @@ class Connection {
                 .catch(err =>  {
                     console.log(`signalling offer failed: ${err}`);
                 });
+        };
+
+        pc.ondatachannel = event => {
+            const channel = event.channel;
+
+            channel.onopen = event => {
+                channel.send("HI FROM RECEIVER");
+            };   
+
+            channel.onmessage = event => {
+                console.log(`Received message on data channel: ${event.data}`);
+            };
         };
     }
 
@@ -162,20 +165,39 @@ class Connection {
             });
     }
 
+    createDataChannel = () => {
+        //TODO: add exception handler 
+        try {
+            const sendChannel = this.peerConnection.createDataChannel("sendChannel");
+
+            sendChannel.onopen = event => {
+                console.log("sending a message on data channel!");
+                sendChannel.send("HI FROM SENDER");
+            }
+
+            sendChannel.onmessage = event => {
+                console.log(`Received message on data channel: ${event.data}`);
+            }
+
+            sendChannel.onclose = event => {
+                console.log('Send channel is closed');
+            }
+        } catch (e) {
+            console.log(`failed to create data channel ${e}`);
+        }
+
+    }
+
     sendSignallingMessage = (message) => {
-        console.log("SENDING MSG 1")
         this.socket.emit('message', message, this.roomId);
     }
 
     sendSignallingMessage2 = (message) => {
-        console.log("SENDING MSG 2")
         this.socket.emit('message2', message, this.roomId);
     }
 
-    handleMessage = (pc, message, canStartWebCam, sendMessageFunc) => {
+    handleSignallingMessage = (pc, message, canStartWebCam, sendMessageFunc) => {
         if (message.offer) {
-            console.log('received offer');
-
             pc.setRemoteDescription(new RTCSessionDescription(message.offer))
                 .then(() => {
                     return canStartWebCam ? this.startLocalCamera() : null;
@@ -194,11 +216,9 @@ class Connection {
                 });
         }
         else if (message.answer) {
-            console.log('received answer');
             pc.setRemoteDescription(new RTCSessionDescription(message.answer));
         }
         else if (message.iceCandidate) {
-            console.log('received candidate');
             const iceCandidate = message.iceCandidate;
 
             pc.addIceCandidate(iceCandidate)
@@ -218,7 +238,6 @@ class Connection {
             }
         }
         else if (message.screenShare) {
-            console.log('got screen share message');
             if(message.screenShare in this.streamId2Content && this.unIdentifiedStreams.map(ms => ms.id).includes(message.screenShare)) {
                 const remoteScreenStream = this.unIdentifiedStreams.find(ms => ms.id === message.screenShare);
 
@@ -232,6 +251,10 @@ class Connection {
     }
 }
 
+function sendDataChannelMessage(connectionObj) {
+    connectionObj.createDataChannel();
+}
+
 function createSocketConnectionInstance(settings={}) {
     return new Connection(settings);
 }
@@ -240,4 +263,4 @@ function enableScreenShare(connectionObj) {
     connectionObj.startLocalScreenShare();
 }
 
-export { createSocketConnectionInstance, enableScreenShare }
+export { createSocketConnectionInstance, enableScreenShare, sendDataChannelMessage }

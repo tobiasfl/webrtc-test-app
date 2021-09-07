@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { createSocketConnectionInstance, enableScreenShare } from './connection';
+import { createSocketConnectionInstance, enableScreenShare, sendDataChannelMessage } from './connection';
 
 const RoomComponent = (props) => {
     let socketInstance = useRef(null);
@@ -47,6 +47,7 @@ const RoomComponent = (props) => {
                     </tr>
                 </tbody>
             </table>
+            <button onClick={() => sendDataChannelMessage(socketInstance.current)}>Send data channel message</button>
         </React.Fragment>
     )
 }

@@ -122,7 +122,7 @@ const express = require('express');
 
 const path = require('path');
 
-const app = express(); //added by me
+const app = express();
 
 const server = require('http').createServer(app);
 

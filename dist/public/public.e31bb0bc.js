@@ -42330,14 +42330,13 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.createSocketConnectionInstance = createSocketConnectionInstance;
 exports.enableScreenShare = enableScreenShare;
-
-var _webrtcAdapter = _interopRequireDefault(require("webrtc-adapter"));
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+exports.sendDataChannelMessage = sendDataChannelMessage;
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
+
+var adapter = require('webrtc-adapter');
 
 var io = require('socket.io-client');
 
@@ -42377,8 +42376,6 @@ var Connection = function Connection() {
 
   _defineProperty(this, "initializeSocketEvents", function () {
     _this.socket.on('connect', function () {
-      console.log("socket connected:".concat(_this.socket.connected));
-
       _this.socket.emit('join-room', _this.roomId);
     });
 
@@ -42387,12 +42384,10 @@ var Connection = function Connection() {
     });
 
     _this.socket.on('created', function (roomId) {
-      console.log('room created');
       _this.roomId = roomId;
     });
 
     _this.socket.on('join', function (roomId) {
-      console.log('joining room');
       _this.roomId = roomId;
     });
 
@@ -42401,15 +42396,11 @@ var Connection = function Connection() {
     });
 
     _this.socket.on('message', function (message) {
-      console.log('HANDLING MSG 1');
-
-      _this.handleMessage(_this.peerConnection, message, true, _this.sendSignallingMessage);
+      _this.handleSignallingMessage(_this.peerConnection, message, true, _this.sendSignallingMessage);
     });
 
     _this.socket.on('message2', function (message) {
-      console.log('HANDLING MSG 2');
-
-      _this.handleMessage(_this.peerConnection2, message, false, _this.sendSignallingMessage2);
+      _this.handleSignallingMessage(_this.peerConnection2, message, false, _this.sendSignallingMessage2);
     });
 
     _this.socket.on('joined', function (roomId) {
@@ -42431,8 +42422,6 @@ var Connection = function Connection() {
     };
 
     pc.onconnectionstatechange = function (event) {
-      console.log("handling connectionstatechange event");
-
       if (pc.connectionState === 'connected') {
         console.log('RTCPeerConnection is connected');
       } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
@@ -42454,8 +42443,6 @@ var Connection = function Connection() {
 
         delete _this.streamId2Content[newStream.id];
       } else {
-        console.log('received unidentified track');
-
         _this.unIdentifiedStreams.push(newStream);
       }
     };
@@ -42478,6 +42465,18 @@ var Connection = function Connection() {
       }).catch(function (err) {
         console.log("signalling offer failed: ".concat(err));
       });
+    };
+
+    pc.ondatachannel = function (event) {
+      var channel = event.channel;
+
+      channel.onopen = function (event) {
+        channel.send("HI FROM RECEIVER");
+      };
+
+      channel.onmessage = function (event) {
+        console.log("Received message on data channel: ".concat(event.data));
+      };
     };
   });
 
@@ -42511,21 +42510,38 @@ var Connection = function Connection() {
     });
   });
 
-  _defineProperty(this, "sendSignallingMessage", function (message) {
-    console.log("SENDING MSG 1");
+  _defineProperty(this, "createDataChannel", function () {
+    //TODO: add exception handler 
+    try {
+      var sendChannel = _this.peerConnection.createDataChannel("sendChannel");
 
+      sendChannel.onopen = function (event) {
+        console.log("sending a message on data channel!");
+        sendChannel.send("HI FROM SENDER");
+      };
+
+      sendChannel.onmessage = function (event) {
+        console.log("Received message on data channel: ".concat(event.data));
+      };
+
+      sendChannel.onclose = function (event) {
+        console.log('Send channel is closed');
+      };
+    } catch (e) {
+      console.log("failed to create data channel ".concat(e));
+    }
+  });
+
+  _defineProperty(this, "sendSignallingMessage", function (message) {
     _this.socket.emit('message', message, _this.roomId);
   });
 
   _defineProperty(this, "sendSignallingMessage2", function (message) {
-    console.log("SENDING MSG 2");
-
     _this.socket.emit('message2', message, _this.roomId);
   });
 
-  _defineProperty(this, "handleMessage", function (pc, message, canStartWebCam, sendMessageFunc) {
+  _defineProperty(this, "handleSignallingMessage", function (pc, message, canStartWebCam, sendMessageFunc) {
     if (message.offer) {
-      console.log('received offer');
       pc.setRemoteDescription(new RTCSessionDescription(message.offer)).then(function () {
         return canStartWebCam ? _this.startLocalCamera() : null;
       }).then(function () {
@@ -42540,10 +42556,8 @@ var Connection = function Connection() {
         console.log("signalling answer failed: ".concat(err));
       });
     } else if (message.answer) {
-      console.log('received answer');
       pc.setRemoteDescription(new RTCSessionDescription(message.answer));
     } else if (message.iceCandidate) {
-      console.log('received candidate');
       var iceCandidate = message.iceCandidate;
       pc.addIceCandidate(iceCandidate).catch(function (err) {
         console.log("adding ice candidate failed ".concat(err));
@@ -42565,8 +42579,6 @@ var Connection = function Connection() {
         _this.streamId2Content[message.webcam] = 'webcam';
       }
     } else if (message.screenShare) {
-      console.log('got screen share message');
-
       if (message.screenShare in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
         return ms.id;
       }).includes(message.screenShare)) {
@@ -42591,6 +42603,10 @@ var Connection = function Connection() {
 } // Signaling server interaction 
 // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
 ;
+
+function sendDataChannelMessage(connectionObj) {
+  connectionObj.createDataChannel();
+}
 
 function createSocketConnectionInstance() {
   var settings = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
@@ -42650,7 +42666,11 @@ var RoomComponent = function RoomComponent(props) {
     autoPlay: true,
     width: "640",
     height: "480"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote screen")))))));
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote screen")))))), /*#__PURE__*/_react.default.createElement("button", {
+    onClick: function onClick() {
+      return (0, _connection.sendDataChannelMessage)(socketInstance.current);
+    }
+  }, "Send data channel message"));
 };
 
 var _default = RoomComponent;
@@ -42764,7 +42784,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "34619" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "32781" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};
