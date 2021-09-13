@@ -42331,6 +42331,7 @@ Object.defineProperty(exports, "__esModule", {
 exports.createSocketConnectionInstance = createSocketConnectionInstance;
 exports.enableScreenShare = enableScreenShare;
 exports.sendDataChannelMessage = sendDataChannelMessage;
+exports.startExtraCamera = startExtraCamera;
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
@@ -42347,11 +42348,6 @@ var peerConnectionConfig = {
     urls: 'stun:10.0.3.1:3478'
   }]
 };
-var peerConnectionConstraints = {
-  'optional': [{
-    'DtlsSrtpKeyAgreement': true
-  }]
-};
 var mediaConstraints = {
   video: true,
   audio: false
@@ -42362,9 +42358,9 @@ var Connection = function Connection() {
 
   _classCallCheck(this, Connection);
 
-  _defineProperty(this, "peerConnection", new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints));
+  _defineProperty(this, "peerConnection", new RTCPeerConnection(peerConnectionConfig));
 
-  _defineProperty(this, "peerConnection2", new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints));
+  _defineProperty(this, "peerConnection2", new RTCPeerConnection(peerConnectionConfig));
 
   _defineProperty(this, "socket", io());
 
@@ -42396,11 +42392,13 @@ var Connection = function Connection() {
     });
 
     _this.socket.on('message', function (message) {
-      _this.handleSignallingMessage(_this.peerConnection, message, true, _this.sendSignallingMessage);
+      _this.handleSignallingMessage(_this.peerConnection, message, _this.startLocalCamera, _this.sendSignallingMessage);
     });
 
     _this.socket.on('message2', function (message) {
-      _this.handleSignallingMessage(_this.peerConnection2, message, false, _this.sendSignallingMessage2);
+      _this.handleSignallingMessage(_this.peerConnection2, message, function () {
+        return null;
+      }, _this.sendSignallingMessage2);
     });
 
     _this.socket.on('joined', function (roomId) {
@@ -42498,6 +42496,19 @@ var Connection = function Connection() {
     });
   });
 
+  _defineProperty(this, "startExtraCamera", function () {
+    console.log("starting extra camera");
+    return navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
+      _this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
+
+      _this.attachStreamToHtml('local-screen-container', stream);
+
+      _this.sendSignallingMessage2({
+        'screenShare': stream.id
+      });
+    });
+  });
+
   _defineProperty(this, "startLocalCamera", function () {
     return navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
       _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
@@ -42540,10 +42551,10 @@ var Connection = function Connection() {
     _this.socket.emit('message2', message, _this.roomId);
   });
 
-  _defineProperty(this, "handleSignallingMessage", function (pc, message, canStartWebCam, sendMessageFunc) {
+  _defineProperty(this, "handleSignallingMessage", function (pc, message, startStreamFunc, sendMessageFunc) {
     if (message.offer) {
       pc.setRemoteDescription(new RTCSessionDescription(message.offer)).then(function () {
-        return canStartWebCam ? _this.startLocalCamera() : null;
+        return startStreamFunc();
       }).then(function () {
         return pc.createAnswer();
       }).then(function (answer) {
@@ -42616,6 +42627,10 @@ function createSocketConnectionInstance() {
 function enableScreenShare(connectionObj) {
   connectionObj.startLocalScreenShare();
 }
+
+function startExtraCamera(connectionObj) {
+  connectionObj.startExtraCamera();
+}
 },{"webrtc-adapter":"../../node_modules/webrtc-adapter/src/js/adapter_core.js","socket.io-client":"../../node_modules/socket.io-client/build/index.js"}],"room-component.js":[function(require,module,exports) {
 "use strict";
 
@@ -42661,7 +42676,11 @@ var RoomComponent = function RoomComponent(props) {
     onClick: function onClick() {
       return (0, _connection.enableScreenShare)(socketInstance.current);
     }
-  }, "Start screen share"))), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
+  }, "Start screen share"), /*#__PURE__*/_react.default.createElement("button", {
+    onClick: function onClick() {
+      return (0, _connection.startExtraCamera)(socketInstance.current);
+    }
+  }, "Start extra camera stream"))), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
     id: "remote-screen-container",
     autoPlay: true,
     width: "640",
@@ -42784,7 +42803,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "46067" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "43891" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

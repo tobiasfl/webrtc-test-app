@@ -6,17 +6,11 @@ const peerConnectionConfig = { iceServers: [{
         urls: 'stun:10.0.3.1:3478'
 }]};
 
-const peerConnectionConstraints = {
-    'optional': [
-        {'DtlsSrtpKeyAgreement': true}
-    ]
-};
-
 const mediaConstraints = {video: true, audio: false};
 
 class Connection {
-    peerConnection = new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints);
-    peerConnection2 = new RTCPeerConnection(peerConnectionConfig, peerConnectionConstraints);
+    peerConnection = new RTCPeerConnection(peerConnectionConfig);
+    peerConnection2 = new RTCPeerConnection(peerConnectionConfig);
     socket = io();
     roomId = 'test';
     unIdentifiedStreams = [];
@@ -50,11 +44,11 @@ class Connection {
         });
 
         this.socket.on('message', message => {
-            this.handleSignallingMessage(this.peerConnection, message, true, this.sendSignallingMessage);
+            this.handleSignallingMessage(this.peerConnection, message, this.startLocalCamera, this.sendSignallingMessage);
         });
 
         this.socket.on('message2', message => {
-            this.handleSignallingMessage(this.peerConnection2, message, false, this.sendSignallingMessage2);
+            this.handleSignallingMessage(this.peerConnection2, message, () => null, this.sendSignallingMessage2);
         })
 
         this.socket.on('joined', (roomId) => {
@@ -156,6 +150,17 @@ class Connection {
             });
     }
 
+    // when testing with extra camera stream instead of screen share
+    startExtraCamera = () => {
+        console.log("starting extra camera");
+        return navigator.mediaDevices.getUserMedia(mediaConstraints)
+            .then(stream => {
+                this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
+                this.attachStreamToHtml('local-screen-container', stream);
+                this.sendSignallingMessage2({'screenShare': stream.id})
+            });
+    }
+
     startLocalCamera = () => {
         return navigator.mediaDevices.getUserMedia(mediaConstraints)
             .then(stream => {
@@ -196,11 +201,11 @@ class Connection {
         this.socket.emit('message2', message, this.roomId);
     }
 
-    handleSignallingMessage = (pc, message, canStartWebCam, sendMessageFunc) => {
+    handleSignallingMessage = (pc, message, startStreamFunc, sendMessageFunc) => {
         if (message.offer) {
             pc.setRemoteDescription(new RTCSessionDescription(message.offer))
                 .then(() => {
-                    return canStartWebCam ? this.startLocalCamera() : null;
+                    return startStreamFunc();
                 })
                 .then(() => {
                     return pc.createAnswer();
@@ -263,4 +268,8 @@ function enableScreenShare(connectionObj) {
     connectionObj.startLocalScreenShare();
 }
 
-export { createSocketConnectionInstance, enableScreenShare, sendDataChannelMessage }
+function startExtraCamera(connectionObj) {
+    connectionObj.startExtraCamera();
+}
+
+export { createSocketConnectionInstance, enableScreenShare, sendDataChannelMessage, startExtraCamera }
