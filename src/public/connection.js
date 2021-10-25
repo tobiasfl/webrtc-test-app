@@ -14,7 +14,12 @@ class Connection {
     socket = io();
     roomId = 'test';
     unIdentifiedStreams = [];
-    streamId2Content = {}
+    streamId2Content = {};
+
+    receiveBuffer = [];
+    receivedSize = 0;
+    toReceive = null;
+    fileName = null;
 
     constructor() {
         this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
@@ -120,20 +125,49 @@ class Connection {
                     console.log(`signalling offer failed: ${err}`);
                 });
         };
-
+        // When the other peer sends on datachannel
         pc.ondatachannel = event => {
             const channel = event.channel;
+            channel.binarytype = 'arraybuffer';
 
-            channel.onopen = event => {
-                channel.send("HI FROM RECEIVER");
-            };   
+            channel.onmessage = this.handleDataChannelMessageReceived;
 
-            channel.onmessage = event => {
-                console.log(`Received message on data channel: ${event.data}`);
-            };
+            //Reset stuff from previous download
+            this.receivedSize = 0;
+            this.fileName = null;
+            const downloadAnchor = document.querySelector("a#download");
+            if(downloadAnchor.href) {
+                URL.revokeObjectURL(downloadAnchor.href);
+                downloadAnchor.removeAttribute('href');
+            }
         };
     }
 
+    handleDataChannelMessageReceived = (event) => {
+                console.log(`Received message on data channel: ${event.data.size}`);
+                console.log(`Received message on data channel: ${event.data.byteLength}`);
+                this.receiveBuffer.push(event.data);
+                //For some reason these differ between chrome and firefox
+                this.receivedSize += event.data.size ? event.data.size : event.data.byteLength;
+
+                //update html
+                const sendProgressMeter = document.getElementById('receive-progress');
+                sendProgressMeter.textContent = `${this.receivedSize}/${this.toReceive}`;
+
+                console.log("this.receivedSize", this.receivedSize);
+                console.log("this.toReceive", this.toReceive);
+                if(this.toReceive !== null && this.receivedSize === this.toReceive){
+                    console.log("received the whole file now");
+                    const received = new Blob(this.receiveBuffer);
+                    this.receiveBuffer = [];
+
+                    const downloadAnchor = document.querySelector("a#download");
+                    downloadAnchor.href = URL.createObjectURL(received);
+                    downloadAnchor.download = this.filename;
+                    downloadAnchor.textContent = "Click to download the file";
+                    downloadAnchor.style.dissplay = 'block';
+                }
+            };
 
     attachStreamToHtml = (elementId, stream) => {
         const videoContainer = document.getElementById(elementId);
@@ -170,18 +204,44 @@ class Connection {
             });
     }
 
-    createDataChannel = () => {
+    sendFile = (file) => {
         //TODO: add exception handler 
         try {
+            //First send metadata via the signalling channel
+            this.sendSignallingMessage({metadata:{size: file.size, name: file.name}});
+
             const sendChannel = this.peerConnection.createDataChannel("sendChannel");
 
             sendChannel.onopen = event => {
-                console.log("sending a message on data channel!");
-                sendChannel.send("HI FROM SENDER");
+                console.log("sending a file on data channel!");
+
+                const chunkSize = 16384;
+                let offset = 0;
+
+                const fileReader = new FileReader();
+                fileReader.onerror = (error) => console.log("Error reading file:", error);
+                fileReader.onabort = (event) => console.log("File reading aborted:", event);
+
+                fileReader.onload = (e) => {
+                    console.log('Sending another slice with length ' + e.target.result.byteLength);
+                    sendChannel.send(e.target.result);
+                    offset += e.target.result.byteLength;
+                    if (offset < file.size) {
+                        readSlice(offset);
+                    }
+
+                    const sendProgressMeter = document.getElementById('send-progress');
+                    sendProgressMeter.textContent = `${offset}/${file.size}`;
+                };
+                const readSlice = o => {
+                    const slice = file.slice(offset, o + chunkSize);
+                    fileReader.readAsArrayBuffer(slice);
+                }
+                readSlice(0);
             }
 
             sendChannel.onmessage = event => {
-                console.log(`Received message on data channel: ${event.data}`);
+                console.log(`Received file on data channel`);
             }
 
             sendChannel.onclose = event => {
@@ -253,11 +313,17 @@ class Connection {
                 this.streamId2Content[message.screenShare] = 'screenShare';
             }
         }
+        else if (message.metadata) {
+            console.log("message received with metadata", message.metadata.name);
+            this.toReceive = message.metadata.size;
+            this.fileName = message.metadata.name;
+            // TODO: maybe check if the whole file is already received
+        }
     }
 }
 
-function sendDataChannelMessage(connectionObj) {
-    connectionObj.createDataChannel();
+function sendData(connectionObj, file) {
+    connectionObj.sendFile(file);
 }
 
 function createSocketConnectionInstance(settings={}) {
@@ -272,4 +338,4 @@ function startExtraCamera(connectionObj) {
     connectionObj.startExtraCamera();
 }
 
-export { createSocketConnectionInstance, enableScreenShare, sendDataChannelMessage, startExtraCamera }
+export { createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera }

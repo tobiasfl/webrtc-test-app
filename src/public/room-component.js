@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
-import { createSocketConnectionInstance, enableScreenShare, sendDataChannelMessage, startExtraCamera } from './connection';
+import React, { useEffect, useRef, useState } from 'react';
+import { createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera } from './connection';
 
 const RoomComponent = (props) => {
     let socketInstance = useRef(null);
+    const [chosenFile, setChosenFile] = useState(null);
 
     useEffect(() => {
         startConnection();
@@ -10,6 +11,24 @@ const RoomComponent = (props) => {
 
     const startConnection = () => {
         socketInstance.current = createSocketConnectionInstance();
+    }
+
+    const handleFileInputChange = (event) => {
+        const file = event.target.files[0];
+        if (!file) {
+            console.log("No file chosen");
+            setChosenFile(null);
+        }
+        else {
+            console.log("File was chosen");
+            setChosenFile(file);
+        }
+    }
+
+    const handleSendFileButtonClicked = (event) => {
+        if(chosenFile !== null) {
+            sendData(socketInstance.current, chosenFile);
+        }
     }
 
     return (
@@ -48,7 +67,18 @@ const RoomComponent = (props) => {
                     </tr>
                 </tbody>
             </table>
-            <button onClick={() => sendDataChannelMessage(socketInstance.current)}>Send data channel message</button>
+            <section>
+                <form>
+                    <input type="file" onChange={handleFileInputChange}/>
+                </form>
+                <button onClick={handleSendFileButtonClicked} disabled={chosenFile===null}>Send file</button>
+
+                <a id="download"></a>
+                <div >Send progress:</div>
+                <div id="send-progress"></div>
+                <div >Receive progress:</div>
+                <div id="receive-progress"></div>
+            </section>
         </React.Fragment>
     )
 }
