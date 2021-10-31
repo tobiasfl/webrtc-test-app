@@ -16,6 +16,9 @@ class Connection {
     unIdentifiedStreams = [];
     streamId2Content = {};
 
+    mainSender = null;
+    extraSender = null; 
+
     receiveBuffer = [];
     receivedSize = 0;
     toReceive = null;
@@ -178,7 +181,7 @@ class Connection {
         //TODO: firefox struggles with this
         return navigator.mediaDevices.getDisplayMedia(mediaConstraints)
             .then(stream => {
-                this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
+                this.extraSender = this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
                 this.attachStreamToHtml('local-screen-container', stream);
                 this.sendSignallingMessage2({'screenShare': stream.id})
             });
@@ -189,7 +192,7 @@ class Connection {
         console.log("starting extra camera");
         return navigator.mediaDevices.getUserMedia(mediaConstraints)
             .then(stream => {
-                this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
+                this.extraSender = this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
                 this.attachStreamToHtml('local-screen-container', stream);
                 this.sendSignallingMessage2({'screenShare': stream.id})
             });
@@ -198,10 +201,24 @@ class Connection {
     startLocalCamera = () => {
         return navigator.mediaDevices.getUserMedia(mediaConstraints)
             .then(stream => {
-                this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
+                this.mainSender = this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
                 this.attachStreamToHtml('local-camera-container', stream);
                 this.sendSignallingMessage({'webcam': stream.id});
             });
+    }
+
+    closeMainSender = () => {
+        if(this.mainSender) {
+            this.peerConnection.removeTrack(this.mainSender);
+            this.peerConnection.close();
+        }
+    }
+
+    closeExtraSender = () => {
+        if(this.extraSender) {
+            this.peerConnection2.removeTrack(this.extraSender);
+            this.peerConnection2.close();
+        }
     }
 
     sendFile = (file) => {
@@ -338,4 +355,12 @@ function startExtraCamera(connectionObj) {
     connectionObj.startExtraCamera();
 }
 
-export { createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera }
+function closeTopSender(connectionObj) {
+    connectionObj.closeMainSender();
+}
+
+function closeBottomSender(connectionObj) {
+    connectionObj.closeExtraSender();
+}
+
+export {closeTopSender, closeBottomSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera }

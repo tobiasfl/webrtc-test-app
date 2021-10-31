@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera } from './connection';
+import { closeBottomSender, closeTopSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera } from './connection';
 
 const RoomComponent = (props) => {
     let socketInstance = useRef(null);
@@ -40,6 +40,7 @@ const RoomComponent = (props) => {
                             <div>
                                 <video id="local-camera-container" autoPlay width="640" height="480"></video>
                                 <div>Local video</div>
+                                <button onClick={() => closeTopSender(socketInstance.current)}>Close</button>
                             </div>
                         </td>
                         <td>
@@ -56,6 +57,7 @@ const RoomComponent = (props) => {
                                 <div>Local screen</div>
                                 <button onClick={() => enableScreenShare(socketInstance.current)}>Start screen share</button>
                                 <button onClick={() => startExtraCamera(socketInstance.current)}>Start extra camera stream</button>
+                                <button onClick={() => closeBottomSender(socketInstance.current)}>Close</button>
                             </div>
                         </td>
                         <td>
