@@ -49,6 +49,7 @@ io.on('connection', socket => {
             console.log('2nd client joined');
 
             socket.to(roomId).emit('join', roomId);
+
             socket.join(roomId);
             socket.emit('joined', roomId);
         }

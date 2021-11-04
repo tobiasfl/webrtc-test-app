@@ -8,6 +8,7 @@ const peerConnectionConfig = { iceServers: [{
 
 const mediaConstraints = {video: true, audio: false};
 
+
 class Connection {
     peerConnection = new RTCPeerConnection(peerConnectionConfig);
     peerConnection2 = new RTCPeerConnection(peerConnectionConfig);
@@ -16,6 +17,8 @@ class Connection {
     unIdentifiedStreams = [];
     streamId2Content = {};
 
+
+    // RTCSenders, so that they can be removed when wanting to close a videostream
     mainSender = null;
     extraSender = null; 
 
@@ -25,9 +28,11 @@ class Connection {
     fileName = null;
 
     constructor() {
+        //TODO: Could get callbacks in constructor for what to de when connected etc (e.g. enable/disable buttons)
         this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
         this.initializePeerEventHandlers(this.peerConnection2, this.sendSignallingMessage2);
         this.initializeSocketEvents();
+        document.getElementById("main-camera-start-button").setAttribute("disabled","disabled");
     }
 
     // Signaling server interaction 
@@ -52,18 +57,16 @@ class Connection {
         });
 
         this.socket.on('message', message => {
-            this.handleSignallingMessage(this.peerConnection, message, this.startLocalCamera, this.sendSignallingMessage);
+            this.handleSignallingMessage(this.peerConnection, message, this.sendSignallingMessage);
         });
 
         this.socket.on('message2', message => {
-            this.handleSignallingMessage(this.peerConnection2, message, () => null, this.sendSignallingMessage2);
+            this.handleSignallingMessage(this.peerConnection2, message, this.sendSignallingMessage2);
         })
 
         this.socket.on('joined', (roomId) => {
-            this.startLocalCamera()
-                .catch(err =>  {
-                    console.log(`adding local video failed: ${err}`);
-                });
+            document.getElementById("main-camera-start-button").removeAttribute("disabled");
+            this.sendSignallingMessage({ready: 'ready'});
         });
     }
 
@@ -89,10 +92,13 @@ class Connection {
         };
 
         pc.ontrack = event => {
+            console.log("ontrack");
             const newStream = event.streams[0];
             if(newStream.id in this.streamId2Content) {
+                console.log("I know this stream");
                 if (this.streamId2Content[newStream.id] === 'webcam')
                 {
+                    console.log("attaching stream");
                     this.attachStreamToHtml('remote-camera-container', newStream);
                 }
                 else if (this.streamId2Content[newStream.id] === 'screenShare') {
@@ -104,6 +110,7 @@ class Connection {
                 delete this.streamId2Content[newStream.id];
             }
             else {
+                console.log("unidentified stream");
                 this.unIdentifiedStreams.push(newStream);
             }
         };
@@ -115,6 +122,7 @@ class Connection {
         pc.onicecandidateerror = event => {
             console.log(`ice candidate error, code:${event.errorCode} text:${event.errorText}`);
         };
+
 
         pc.onnegotiationneeded = event => {
             pc.createOffer()
@@ -179,31 +187,40 @@ class Connection {
 
     startLocalScreenShare = () => {
         //TODO: firefox struggles with this
-        return navigator.mediaDevices.getDisplayMedia(mediaConstraints)
+        navigator.mediaDevices.getDisplayMedia(mediaConstraints)
             .then(stream => {
                 this.extraSender = this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
                 this.attachStreamToHtml('local-screen-container', stream);
                 this.sendSignallingMessage2({'screenShare': stream.id})
+            })
+            .catch(err => {
+                console.log(`adding local screen share failed: ${err}`);
             });
     }
 
     // when testing with extra camera stream instead of screen share
     startExtraCamera = () => {
-        console.log("starting extra camera");
-        return navigator.mediaDevices.getUserMedia(mediaConstraints)
+        navigator.mediaDevices.getUserMedia(mediaConstraints)
             .then(stream => {
                 this.extraSender = this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
                 this.attachStreamToHtml('local-screen-container', stream);
                 this.sendSignallingMessage2({'screenShare': stream.id})
+            })
+            .catch(err => {
+                console.log(`adding extra local camera failed: ${err}`);
             });
     }
 
     startLocalCamera = () => {
-        return navigator.mediaDevices.getUserMedia(mediaConstraints)
+        console.log("starting local video");
+        navigator.mediaDevices.getUserMedia(mediaConstraints)
             .then(stream => {
                 this.mainSender = this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
                 this.attachStreamToHtml('local-camera-container', stream);
                 this.sendSignallingMessage({'webcam': stream.id});
+            })
+            .catch(err => {
+                console.log(`adding local camera failed: ${err}`);
             });
     }
 
@@ -278,12 +295,9 @@ class Connection {
         this.socket.emit('message2', message, this.roomId);
     }
 
-    handleSignallingMessage = (pc, message, startStreamFunc, sendMessageFunc) => {
+    handleSignallingMessage = (pc, message, sendMessageFunc) => {
         if (message.offer) {
             pc.setRemoteDescription(new RTCSessionDescription(message.offer))
-                .then(() => {
-                    return startStreamFunc();
-                })
                 .then(() => {
                     return pc.createAnswer();
                 })
@@ -336,6 +350,10 @@ class Connection {
             this.fileName = message.metadata.name;
             // TODO: maybe check if the whole file is already received
         }
+        else if (message.ready) {
+            console.log("OTHER PEER PRESENT");
+            document.getElementById("main-camera-start-button").removeAttribute("disabled");
+        }
     }
 }
 
@@ -345,6 +363,10 @@ function sendData(connectionObj, file) {
 
 function createSocketConnectionInstance(settings={}) {
     return new Connection(settings);
+}
+
+function startMainCamera(connectionObj) {
+    connectionObj.startLocalCamera();
 }
 
 function enableScreenShare(connectionObj) {
@@ -363,4 +385,4 @@ function closeBottomSender(connectionObj) {
     connectionObj.closeExtraSender();
 }
 
-export {closeTopSender, closeBottomSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera }
+export {closeTopSender, closeBottomSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera, startMainCamera }
