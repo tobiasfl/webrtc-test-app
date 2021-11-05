@@ -10,6 +10,8 @@ const mediaConstraints = {video: true, audio: false};
 
 const DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
 const DC_BUFFERED_AMOUNT_LOW_THRESH = 65535;
+//No idea what the proper value for this should be
+const DC_BUFFERED_AMOUNT_MAX_THRESH = 10000000;
 
 class Connection {
     peerConnection = new RTCPeerConnection(peerConnectionConfig);
@@ -258,33 +260,36 @@ class Connection {
             const sendChannel = pc.createDataChannel("sendChannel");
             sendChannel.bufferedAmountLowThreshold = DC_BUFFERED_AMOUNT_LOW_THRESH;
 
+
+
+            const fileReader = new FileReader();
+            fileReader.onerror = (error) => console.log("Error reading file:", error);
+            fileReader.onabort = (event) => console.log("File reading aborted:", event);
+
+            const chunkSize = DC_MINIMAL_SAFE_CHUNK_SIZE;
+            let offset = 0;
+
+            fileReader.onload = (e) => {
+                console.log('Sending another slice with length ' + e.target.result.byteLength);
+                sendChannel.send(e.target.result);
+                offset += e.target.result.byteLength;
+                if (offset < file.size && sendChannel.bufferedAmount < DC_BUFFERED_AMOUNT_MAX_THRESH) {
+                    readSlice(offset);
+                }
+
+                const sendProgressMeter = document.getElementById(htmlProgressElementId);
+                sendProgressMeter.textContent = `${offset}/${file.size}`;
+            };
+
+            const readSlice = o => {
+                const slice = file.slice(offset, o + chunkSize);
+                fileReader.readAsArrayBuffer(slice);
+            }
+
+
             sendChannel.onopen = event => {
                 console.log("sending a file on data channel!");
-
-                const chunkSize = DC_MINIMAL_SAFE_CHUNK_SIZE;
-                let offset = 0;
-
-                const fileReader = new FileReader();
-                fileReader.onerror = (error) => console.log("Error reading file:", error);
-                fileReader.onabort = (event) => console.log("File reading aborted:", event);
-
-                fileReader.onload = (e) => {
-                    console.log('Sending another slice with length ' + e.target.result.byteLength);
-                    sendChannel.send(e.target.result);
-                    offset += e.target.result.byteLength;
-                    if (offset < file.size) {
-                        //sendChannel.bufferedAmount
-
-                        readSlice(offset);
-                    }
-
-                    const sendProgressMeter = document.getElementById(htmlProgressElementId);
-                    sendProgressMeter.textContent = `${offset}/${file.size}`;
-                };
-                const readSlice = o => {
-                    const slice = file.slice(offset, o + chunkSize);
-                    fileReader.readAsArrayBuffer(slice);
-                }
+                // To start the file reading process
                 readSlice(0);
             }
 
@@ -303,6 +308,9 @@ class Connection {
 
             sendChannel.onbufferedamountlow = event => {
                 console.log("onbufferedamountlow event fired");
+                if (offset < file.size) {
+                    readSlice(offset);
+                }
             }
 
         } catch (e) {
