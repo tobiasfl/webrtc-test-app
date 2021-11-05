@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { closeBottomSender, closeTopSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera, startMainCamera } from './connection';
+import { closeBottomSender, closeTopSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera, startMainCamera, sendDataExtra } from './connection';
 
 const RoomComponent = (props) => {
     let socketInstance = useRef(null);
@@ -25,9 +25,15 @@ const RoomComponent = (props) => {
         }
     }
 
-    const handleSendFileButtonClicked = (event) => {
+    const handleSendFileButtonClicked = (progressId) => {
         if(chosenFile !== null) {
-            sendData(socketInstance.current, chosenFile);
+            sendData(socketInstance.current, chosenFile, progressId);
+        }
+    }
+
+    const handleSendFileButtonClicked2 = (progressId) => {
+        if(chosenFile !== null) {
+            sendDataExtra(socketInstance.current, chosenFile, progressId);
         }
     }
 
@@ -74,13 +80,28 @@ const RoomComponent = (props) => {
                 <form>
                     <input type="file" onChange={handleFileInputChange}/>
                 </form>
-                <button onClick={handleSendFileButtonClicked} disabled={chosenFile===null}>Send file</button>
-
-                <a id="download"></a>
-                <div >Send progress:</div>
-                <div id="send-progress"></div>
-                <div >Receive progress:</div>
-                <div id="receive-progress"></div>
+                <table>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <button onClick={() => handleSendFileButtonClicked("send-progress")} disabled={chosenFile===null}>Send file</button>
+                                <a id="download"></a>
+                                <div >Send progress:</div>
+                                <div id="send-progress"></div>
+                                <div >Receive progress:</div>
+                                <div id="receive-progress"></div>
+                            </td>
+                            <td>
+                                <button onClick={() => handleSendFileButtonClicked2("send-progress2")} disabled={chosenFile===null}>Send file</button>
+                                <a id="download2"></a>
+                                <div >Send progress:</div>
+                                <div id="send-progress2"></div>
+                                <div >Receive progress:</div>
+                                <div id="receive-progress2"></div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
             </section>
         </React.Fragment>
     )

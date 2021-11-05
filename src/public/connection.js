@@ -1,5 +1,5 @@
 const adapter =  require('webrtc-adapter');
-const io =  require('socket.io-client');
+const {io} =  require('socket.io-client');
 
 const peerConnectionConfig = { iceServers: [{
         urls: 'stun:23.21.150.121' }, { 
@@ -8,6 +8,8 @@ const peerConnectionConfig = { iceServers: [{
 
 const mediaConstraints = {video: true, audio: false};
 
+const DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
+const DC_BUFFERED_AMOUNT_LOW_THRESH = 65535;
 
 class Connection {
     peerConnection = new RTCPeerConnection(peerConnectionConfig);
@@ -238,18 +240,28 @@ class Connection {
         }
     }
 
-    sendFile = (file) => {
+    sendFile1 = (file, htmlProgressElementId) => {
+        this.sendFile(file, htmlProgressElementId, this.peerConnection);
+    }
+   
+    sendFile2 = (file, htmlProgressElementId) => {
+        this.sendFile(file, htmlProgressElementId, this.peerConnection2);
+    }   
+
+
+    sendFile = (file, htmlProgressElementId, pc) => {
         //TODO: add exception handler 
         try {
             //First send metadata via the signalling channel
             this.sendSignallingMessage({metadata:{size: file.size, name: file.name}});
 
-            const sendChannel = this.peerConnection.createDataChannel("sendChannel");
+            const sendChannel = pc.createDataChannel("sendChannel");
+            sendChannel.bufferedAmountLowThreshold = DC_BUFFERED_AMOUNT_LOW_THRESH;
 
             sendChannel.onopen = event => {
                 console.log("sending a file on data channel!");
 
-                const chunkSize = 16384;
+                const chunkSize = DC_MINIMAL_SAFE_CHUNK_SIZE;
                 let offset = 0;
 
                 const fileReader = new FileReader();
@@ -261,10 +273,12 @@ class Connection {
                     sendChannel.send(e.target.result);
                     offset += e.target.result.byteLength;
                     if (offset < file.size) {
+                        //sendChannel.bufferedAmount
+
                         readSlice(offset);
                     }
 
-                    const sendProgressMeter = document.getElementById('send-progress');
+                    const sendProgressMeter = document.getElementById(htmlProgressElementId);
                     sendProgressMeter.textContent = `${offset}/${file.size}`;
                 };
                 const readSlice = o => {
@@ -281,10 +295,19 @@ class Connection {
             sendChannel.onclose = event => {
                 console.log('Send channel is closed');
             }
+
+            sendChannel.onerror = event => {
+                console.log(`SendChannel error: ${event.error}`);
+                console.log(`sendChannel bufferedAmount: ${sendChannel.bufferedAmount}`);
+            }
+
+            sendChannel.onbufferedamountlow = event => {
+                console.log("onbufferedamountlow event fired");
+            }
+
         } catch (e) {
             console.log(`failed to create data channel ${e}`);
         }
-
     }
 
     sendSignallingMessage = (message) => {
@@ -357,8 +380,12 @@ class Connection {
     }
 }
 
-function sendData(connectionObj, file) {
-    connectionObj.sendFile(file);
+function sendData(connectionObj, file, htmlProgressElementId) {
+    connectionObj.sendFile1(file, htmlProgressElementId);
+}
+
+function sendDataExtra(connectionObj, file, htmlProgressElementId) {
+    connectionObj.sendFile2(file, htmlProgressElementId);
 }
 
 function createSocketConnectionInstance(settings={}) {
@@ -385,4 +412,4 @@ function closeBottomSender(connectionObj) {
     connectionObj.closeExtraSender();
 }
 
-export {closeTopSender, closeBottomSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera, startMainCamera }
+export { closeTopSender, closeBottomSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera, startMainCamera, sendDataExtra }
