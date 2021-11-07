@@ -232,6 +232,7 @@ class Connection {
         if(this.mainSender) {
             this.peerConnection.removeTrack(this.mainSender);
             this.peerConnection.close();
+            document.getElementById('local-camera-container').srcObject = null;
         }
     }
 
@@ -239,6 +240,7 @@ class Connection {
         if(this.extraSender) {
             this.peerConnection2.removeTrack(this.extraSender);
             this.peerConnection2.close();
+            document.getElementById('local-screen-container').srcObject = null;
         }
     }
 
