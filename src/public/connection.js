@@ -36,7 +36,6 @@ class Connection {
         this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
         this.initializePeerEventHandlers(this.peerConnection2, this.sendSignallingMessage2);
         this.initializeSocketEvents();
-        document.getElementById("main-camera-start-button").setAttribute("disabled","disabled");
     }
 
     // Signaling server interaction 
@@ -69,7 +68,6 @@ class Connection {
         })
 
         this.socket.on('joined', (roomId) => {
-            document.getElementById("main-camera-start-button").removeAttribute("disabled");
             this.sendSignallingMessage({ready: 'ready'});
         });
     }
@@ -191,56 +189,50 @@ class Connection {
 
     startLocalScreenShare = () => {
         //TODO: firefox struggles with this
-        navigator.mediaDevices.getDisplayMedia(mediaConstraints)
-            .then(stream => {
-                this.extraSender = this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
-                this.attachStreamToHtml('local-screen-container', stream);
-                this.sendSignallingMessage2({'screenShare': stream.id})
-            })
-            .catch(err => {
-                console.log(`adding local screen share failed: ${err}`);
-            });
-    }
-
-    // when testing with extra camera stream instead of screen share
-    startExtraCamera = () => {
-        navigator.mediaDevices.getUserMedia(mediaConstraints)
-            .then(stream => {
-                this.extraSender = this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
-                this.attachStreamToHtml('local-screen-container', stream);
-                this.sendSignallingMessage2({'screenShare': stream.id})
-            })
-            .catch(err => {
-                console.log(`adding extra local camera failed: ${err}`);
-            });
+        return navigator.mediaDevices.getDisplayMedia(mediaConstraints)
+           .then(stream => {
+               return this.handleNewStreamStarted(stream);
+           });
     }
 
     startLocalCamera = () => {
-        console.log("starting local video");
-        navigator.mediaDevices.getUserMedia(mediaConstraints)
+        return navigator.mediaDevices.getUserMedia(mediaConstraints)
             .then(stream => {
-                this.mainSender = this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
-                this.attachStreamToHtml('local-camera-container', stream);
-                this.sendSignallingMessage({'webcam': stream.id});
-            })
-            .catch(err => {
-                console.log(`adding local camera failed: ${err}`);
+                return this.handleNewStreamStarted(stream);
             });
     }
 
+    handleNewStreamStarted = (stream) => {
+        if(this.mainSender === null) {
+            this.mainSender = this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
+            this.sendSignallingMessage({'webcam': stream.id});
+            return stream;
+        }
+        else if(this.extraSender === null) {
+            this.extraSender = this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
+            this.sendSignallingMessage2({'screenShare': stream.id})
+            return stream;
+        }
+        else {
+            throw "Only two streams can be running at the same time";
+        }
+    }
+
     closeMainSender = () => {
-        if(this.mainSender) {
+        if(this.mainSender !== null) {
             this.peerConnection.removeTrack(this.mainSender);
             this.peerConnection.close();
             document.getElementById('local-camera-container').srcObject = null;
+            this.mainSender = null;
         }
     }
 
     closeExtraSender = () => {
-        if(this.extraSender) {
+        if(this.extraSender !== null) {
             this.peerConnection2.removeTrack(this.extraSender);
             this.peerConnection2.close();
             document.getElementById('local-screen-container').srcObject = null;
+            this.extraSender = null;
         }
     }
 
@@ -263,7 +255,6 @@ class Connection {
             sendChannel.bufferedAmountLowThreshold = DC_BUFFERED_AMOUNT_LOW_THRESH;
 
 
-
             const fileReader = new FileReader();
             fileReader.onerror = (error) => console.log("Error reading file:", error);
             fileReader.onabort = (event) => console.log("File reading aborted:", event);
@@ -275,6 +266,7 @@ class Connection {
                 console.log('Sending another slice with length ' + e.target.result.byteLength);
                 sendChannel.send(e.target.result);
                 offset += e.target.result.byteLength;
+                // To make sure we don't overload the SCTP buffer we also check the bufferedAmount
                 if (offset < file.size && sendChannel.bufferedAmount < DC_BUFFERED_AMOUNT_MAX_THRESH) {
                     readSlice(offset);
                 }
@@ -385,7 +377,6 @@ class Connection {
         }
         else if (message.ready) {
             console.log("OTHER PEER PRESENT");
-            document.getElementById("main-camera-start-button").removeAttribute("disabled");
         }
     }
 }
@@ -402,16 +393,12 @@ function createSocketConnectionInstance(settings={}) {
     return new Connection(settings);
 }
 
-function startMainCamera(connectionObj) {
-    connectionObj.startLocalCamera();
+function startCamera(connectionObj) {
+    return connectionObj.startLocalCamera();
 }
 
-function enableScreenShare(connectionObj) {
-    connectionObj.startLocalScreenShare();
-}
-
-function startExtraCamera(connectionObj) {
-    connectionObj.startExtraCamera();
+function startScreenShare(connectionObj) {
+    return connectionObj.startLocalScreenShare();
 }
 
 function closeTopSender(connectionObj) {
@@ -422,4 +409,4 @@ function closeBottomSender(connectionObj) {
     connectionObj.closeExtraSender();
 }
 
-export { closeTopSender, closeBottomSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera, startMainCamera, sendDataExtra }
+export { closeTopSender, closeBottomSender, createSocketConnectionInstance, startScreenShare, sendData, startCamera, sendDataExtra }

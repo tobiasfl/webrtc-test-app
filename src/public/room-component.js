@@ -1,17 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { closeBottomSender, closeTopSender, createSocketConnectionInstance, enableScreenShare, sendData, startExtraCamera, startMainCamera, sendDataExtra } from './connection';
+import { closeBottomSender, closeTopSender, createSocketConnectionInstance, startScreenShare, sendData, startCamera, sendDataExtra } from './connection';
+
+const VIDEO_1_START_TIME = 15000;
+const VIDEO_2_START_TIME = 75000;
+const FILE_TRANSFER_1_START = 90000;
+const FILE_TRANSFER_2_START = 1000000;
+
 
 const RoomComponent = (props) => {
     let socketInstance = useRef(null);
     const [chosenFile, setChosenFile] = useState(null);
 
     useEffect(() => {
-        startConnection();
-    }, []);
-
-    const startConnection = () => {
         socketInstance.current = createSocketConnectionInstance();
-    }
+        setTimeout(startMainVideoStream, VIDEO_1_START_TIME);
+        setTimeout(startExtraVideoStream, VIDEO_2_START_TIME);
+        
+    }, []);
 
     const handleFileInputChange = (event) => {
         const file = event.target.files[0];
@@ -37,6 +42,36 @@ const RoomComponent = (props) => {
         }
     }
 
+    const startMainVideoStream = () => {
+        startCamera(socketInstance.current)
+            .then(stream => {
+                document.getElementById("local-camera-container").srcObject = stream;
+            })
+            .catch(err => {
+                console.log(`Starting local video failed: ${err}`);
+            })
+    }
+
+    const startExtraVideoStream = () => {
+        startCamera(socketInstance.current)
+            .then(stream => {
+                document.getElementById("local-screen-container").srcObject = stream;
+            })
+            .catch(err => {
+                console.log(`Starting extra local video failed: ${err}`);
+            })
+    }
+
+    const startMainScreenShare = () => {
+        startScreenShare(socketInstance.current)
+            .then(stream => {
+                document.getElementById("local-camera-container").srcObject = stream;
+            })
+            .catch(err => {
+                console.log(`Starting local screen share failed: ${err}`);
+            })
+    }
+
     return (
         <React.Fragment>
             <table>
@@ -44,9 +79,10 @@ const RoomComponent = (props) => {
                     <tr>
                         <td>
                             <div>
-                                <video id="local-camera-container" autoPlay width="640" height="480"></video>
+                                <video id="local-camera-container" autoPlay width="640" height="480" ></video>
                                 <div>Local video</div>
-                                <button id="main-camera-start-button" onClick={() => startMainCamera(socketInstance.current)}>Start camera stream</button>
+                                <button onClick={startMainVideoStream}>Start camera stream</button>
+                                <button onClick={startMainScreenShare}>Start screen share</button>
                                 <button onClick={() => closeTopSender(socketInstance.current)}>Close</button>
                             </div>
                         </td>
@@ -62,8 +98,8 @@ const RoomComponent = (props) => {
                             <div>
                                 <video id="local-screen-container" autoPlay width="640" height="480"></video>
                                 <div>Local screen</div>
-                                <button id="screen-share-start-button" onClick={() => enableScreenShare(socketInstance.current)}>Start screen share</button>
-                                <button id="extra-camera-start-button" onClick={() => startExtraCamera(socketInstance.current)}>Start extra camera stream</button>
+                                <button onClick={() => enableScreenShare(socketInstance.current)}>Start screen share</button>
+                                <button onClick={startExtraVideoStream}>Start extra camera stream</button>
                                 <button onClick={() => closeBottomSender(socketInstance.current)}>Close</button>
                             </div>
                         </td>
