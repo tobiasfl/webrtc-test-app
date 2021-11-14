@@ -21,6 +21,9 @@ class Connection {
     unIdentifiedStreams = [];
     streamId2Content = {};
 
+    //So that when testing, I can make one node only be receiver, the one that joins 
+    // last becomes sender only
+    joinedFirst = false;
 
     // RTCSenders, so that they can be removed when wanting to close a videostream
     mainSender = null;
@@ -50,6 +53,7 @@ class Connection {
         });
 
         this.socket.on('created', (roomId) => {
+            this.joinedFirst = true;
             this.roomId = roomId;
         });
         this.socket.on('join', (roomId) => {
@@ -157,8 +161,6 @@ class Connection {
     }
 
     handleDataChannelMessageReceived = (event) => {
-                console.log(`Received message on data channel: ${event.data.size}`);
-                console.log(`Received message on data channel: ${event.data.byteLength}`);
                 this.receiveBuffer.push(event.data);
                 //For some reason these differ between chrome and firefox
                 this.receivedSize += event.data.size ? event.data.size : event.data.byteLength;
@@ -167,8 +169,6 @@ class Connection {
                 const sendProgressMeter = document.getElementById('receive-progress');
                 sendProgressMeter.textContent = `${this.receivedSize}/${this.toReceive}`;
 
-                console.log("this.receivedSize", this.receivedSize);
-                console.log("this.toReceive", this.toReceive);
                 if(this.toReceive !== null && this.receivedSize === this.toReceive){
                     console.log("received the whole file now");
                     const received = new Blob(this.receiveBuffer);
@@ -263,7 +263,6 @@ class Connection {
             let offset = 0;
 
             fileReader.onload = (e) => {
-                console.log('Sending another slice with length ' + e.target.result.byteLength);
                 sendChannel.send(e.target.result);
                 offset += e.target.result.byteLength;
                 // To make sure we don't overload the SCTP buffer we also check the bufferedAmount
@@ -277,6 +276,10 @@ class Connection {
 
             const readSlice = o => {
                 const slice = file.slice(offset, o + chunkSize);
+                //THROWS: 
+                //Uncaught DOMException: Failed to execute 
+                //'readAsArrayBuffer' on 'FileReader': 
+                //The object is already busy reading Blobs.
                 fileReader.readAsArrayBuffer(slice);
             }
 
@@ -297,12 +300,11 @@ class Connection {
 
             sendChannel.onerror = event => {
                 console.log(`SendChannel error: ${event.error}`);
-                console.log(`sendChannel bufferedAmount: ${sendChannel.bufferedAmount}`);
             }
 
             sendChannel.onbufferedamountlow = event => {
-                console.log("onbufferedamountlow event fired");
-                if (offset < file.size) {
+                // Checking that FileReader is not alread busy loading, else it might crash 
+                if (offset < file.size && fileReader.readyState !== fileReader.LOADING) {
                     readSlice(offset);
                 }
             }
@@ -382,11 +384,15 @@ class Connection {
 }
 
 function sendData(connectionObj, file, htmlProgressElementId) {
-    connectionObj.sendFile1(file, htmlProgressElementId);
+    if(!connectionObj.joinedFirst) {
+        connectionObj.sendFile1(file, htmlProgressElementId);
+    }
 }
 
 function sendDataExtra(connectionObj, file, htmlProgressElementId) {
-    connectionObj.sendFile2(file, htmlProgressElementId);
+    if(!connectionObj.joinedFirst) {
+        connectionObj.sendFile2(file, htmlProgressElementId);
+    }
 }
 
 function createSocketConnectionInstance(settings={}) {

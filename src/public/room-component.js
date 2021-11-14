@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { closeBottomSender, closeTopSender, createSocketConnectionInstance, startScreenShare, sendData, startCamera, sendDataExtra } from './connection';
 
-const VIDEO_1_START_TIME = 15000;
-const VIDEO_2_START_TIME = 75000;
-const FILE_TRANSFER_1_START = 90000;
-const FILE_TRANSFER_2_START = 1000000;
+const FIRST_START_TIME = 15000
+const VIDEO_1_START_TIME = FIRST_START_TIME;
+const VIDEO_2_START_TIME = FIRST_START_TIME + 99999999;
+const FILE_TRANSFER_1_START = FIRST_START_TIME + 99999999;
+const FILE_TRANSFER_2_START = FIRST_START_TIME + 99999999;
 
 
 const RoomComponent = (props) => {
@@ -15,7 +16,8 @@ const RoomComponent = (props) => {
         socketInstance.current = createSocketConnectionInstance();
         setTimeout(startMainVideoStream, VIDEO_1_START_TIME);
         setTimeout(startExtraVideoStream, VIDEO_2_START_TIME);
-        
+        setTimeout(startTestFileTransfer, FILE_TRANSFER_1_START);
+        setTimeout(startExtraTestFileTransfer, FILE_TRANSFER_2_START);
     }, []);
 
     const handleFileInputChange = (event) => {
@@ -41,6 +43,19 @@ const RoomComponent = (props) => {
             sendDataExtra(socketInstance.current, chosenFile, progressId);
         }
     }
+
+    const startTestFileTransfer = () => {
+        const buffer = new ArrayBuffer(314572800); //about 300MB
+        const file = new File([buffer], "test.txt");
+        sendData(socketInstance.current, file, "send-progress");
+    }
+
+    const startExtraTestFileTransfer = () => {
+        const buffer = new ArrayBuffer(314572800); //about 300MB
+        const file = new File([buffer], "test.txt");
+        sendDataExtra(socketInstance.current, file, "send-progress2");
+    }
+
 
     const startMainVideoStream = () => {
         startCamera(socketInstance.current)
