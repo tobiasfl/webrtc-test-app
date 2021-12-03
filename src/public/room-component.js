@@ -1,24 +1,32 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { closeBottomSender, closeTopSender, createSocketConnectionInstance, startScreenShare, sendData, startCamera, sendDataExtra } from './connection';
 
-const FIRST_START_TIME = 15000
+const FIRST_START_TIME = 10000
+const NO_START_TIME = 99999999999;
 const VIDEO_1_START_TIME = FIRST_START_TIME;
-const VIDEO_2_START_TIME = FIRST_START_TIME + 999999999;
-const FILE_TRANSFER_1_START = FIRST_START_TIME + 999999999;
-const FILE_TRANSFER_2_START = FIRST_START_TIME + 999999999;
+const FILE_TRANSFER_1_START = FIRST_START_TIME;
+
+const urlSearchParams = ['video','data'];
 
 
 const RoomComponent = (props) => {
     let socketInstance = useRef(null);
     const [chosenFile, setChosenFile] = useState(null);
+    const urlParams = new URLSearchParams(window.location.search);
 
     useEffect(() => {
-        socketInstance.current = createSocketConnectionInstance();
-        setTimeout(startMainVideoStream, VIDEO_1_START_TIME);
-        setTimeout(startExtraVideoStream, VIDEO_2_START_TIME);
-        setTimeout(startTestFileTransfer, FILE_TRANSFER_1_START);
-        setTimeout(startExtraTestFileTransfer, FILE_TRANSFER_2_START);
+        socketInstance.current = createSocketConnectionInstance(setTimers);
     }, []);
+
+    const urlFlagPresent = (parameter) => urlParams.has(parameter);
+    
+
+    const setTimers = () => {
+        setTimeout(startMainVideoStream, urlFlagPresent('video') ? FIRST_START_TIME : NO_START_TIME);
+        setTimeout(startExtraVideoStream, NO_START_TIME);
+        setTimeout(startTestFileTransfer, urlFlagPresent('data') ? FIRST_START_TIME : NO_START_TIME);
+        setTimeout(startExtraTestFileTransfer, NO_START_TIME);
+    }
 
     const handleFileInputChange = (event) => {
         const file = event.target.files[0];

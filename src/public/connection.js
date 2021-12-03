@@ -6,6 +6,11 @@ const peerConnectionConfig = { iceServers: [{
         urls: 'stun:10.0.3.1:3478'
 }]};
 
+
+//Negotiation based on:
+//https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation
+
+
 const mediaConstraints = {video: true, audio: false};
 
 //How big messages we can send on data channel
@@ -25,9 +30,7 @@ class Connection {
     unIdentifiedStreams = [];
     streamId2Content = {};
 
-    //So that when testing, I can make one node only be receiver, the one that joins 
-    // last becomes sender only
-    joinedFirst = false;
+    onPeerConnectedCallback
 
     // RTCSenders, so that they can be removed when wanting to close a videostream
     mainSender = null;
@@ -38,7 +41,15 @@ class Connection {
     toReceive = null;
     fileName = null;
 
-    constructor() {
+    makingOffer = false;
+    ignoreOffer = false;
+    polite = false;
+
+    constructor(onPeerConnected) {
+        if(onPeerConnected){
+            this.onPeerConnectedCallback = onPeerConnected;
+        }
+
         //TODO: Could get callbacks in constructor for what to de when connected etc (e.g. enable/disable buttons)
         this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
         this.initializePeerEventHandlers(this.peerConnection2, this.sendSignallingMessage2);
@@ -57,7 +68,6 @@ class Connection {
         });
 
         this.socket.on('created', (roomId) => {
-            this.joinedFirst = true;
             this.roomId = roomId;
         });
         this.socket.on('join', (roomId) => {
@@ -76,52 +86,52 @@ class Connection {
         })
 
         this.socket.on('joined', (roomId) => {
+            this.polite = true;
+            if(this.onPeerConnectedCallback) {
+                this.onPeerConnectedCallback();
+            }
             this.sendSignallingMessage({ready: 'ready'});
         });
     }
 
     initializePeerEventHandlers = (pc, sendMessageFunc) => {
-        pc.onicecandidate = event => {
-            if (event.candidate) {
-                sendMessageFunc({iceCandidate: event.candidate});
-            }
-            else {
-                console.log('End of ice candidates');
-            }
-        };
+        pc.onicecandidate = ({candidate}) => sendMessageFunc({candidate});
 
-        pc.onconnectionstatechange = event => {
+        pc.onconnectionstatechange = () => {
             if (pc.connectionState === 'connected') {
                 console.log('RTCPeerConnection is connected');
             }
-            else if(pc.connectionState === 'failed' 
-                || pc.connectionState === 'closed'
+            else if(pc.connectionState === 'failed') {
+                pc.restartIce();
+            }
+            else if(pc.connectionState === 'closed'
                 || pc.connectionState === 'disconnected'){
-                console.log('peer connection failed, closed or disconnected');
+                console.log('peer connection closed or disconnected');
             }
         };
 
-        pc.ontrack = event => {
-            console.log("ontrack");
-            const newStream = event.streams[0];
-            if(newStream.id in this.streamId2Content) {
-                console.log("I know this stream");
-                if (this.streamId2Content[newStream.id] === 'webcam')
-                {
-                    console.log("attaching stream");
-                    this.attachStreamToHtml('remote-camera-container', newStream);
-                }
-                else if (this.streamId2Content[newStream.id] === 'screenShare') {
-                    this.attachStreamToHtml('remote-screen-container', newStream);
+        pc.ontrack = ({track, streams}) => {
+            const newStream = streams[0];
+            track.onunmute = () => {
+                if(newStream.id in this.streamId2Content) {
+                    console.log("I know this stream");
+                    if (this.streamId2Content[newStream.id] === 'webcam')
+                    {
+                        console.log("attaching stream");
+                        this.attachStreamToHtml('remote-camera-container', newStream);
+                    }
+                    else if (this.streamId2Content[newStream.id] === 'screenShare') {
+                        this.attachStreamToHtml('remote-screen-container', newStream);
+                    }
+                    else {
+                        console.log('invalid id mapping for new stream');
+                    }
+                    delete this.streamId2Content[newStream.id];
                 }
                 else {
-                    console.log('invalid id mapping for new stream');
+                    console.log("unidentified stream");
+                    this.unIdentifiedStreams.push(newStream);
                 }
-                delete this.streamId2Content[newStream.id];
-            }
-            else {
-                console.log("unidentified stream");
-                this.unIdentifiedStreams.push(newStream);
             }
         };
 
@@ -133,18 +143,18 @@ class Connection {
             console.log(`ice candidate error, code:${event.errorCode} text:${event.errorText}`);
         };
 
-
-        pc.onnegotiationneeded = event => {
-            pc.createOffer()
-                .then(offer => {
-                    return pc.setLocalDescription(offer);
-                })
+        pc.onnegotiationneeded = () => {
+            this.makingOffer = true;
+            pc.setLocalDescription()
                 .then(() => {
-                    sendMessageFunc({'offer': pc.localDescription});
+                    sendMessageFunc({description: pc.localDescription});
                 })
-                .catch(err =>  {
+                .catch(err => {
                     console.log(`signalling offer failed: ${err}`);
-                });
+                })
+                .finally(() => {
+                    this.makingOffer = false;
+                })
         };
         // When the other peer sends on datachannel
         pc.ondatachannel = event => {
@@ -333,81 +343,88 @@ class Connection {
         this.socket.emit('message2', message, this.roomId);
     }
 
-    handleSignallingMessage = (pc, message, sendMessageFunc) => {
-        if (message.offer) {
-            pc.setRemoteDescription(new RTCSessionDescription(message.offer))
-                .then(() => {
-                    return pc.createAnswer();
-                })
-                .then(answer => {
-                    return pc.setLocalDescription(answer);
-                })
-                .then(() => {
-                    sendMessageFunc({'answer':pc.localDescription});
-                })
-                .catch(err => {
-                    console.log(`signalling answer failed: ${err}`);
-                });
-        }
-        else if (message.answer) {
-            pc.setRemoteDescription(new RTCSessionDescription(message.answer));
-        }
-        else if (message.iceCandidate) {
-            const iceCandidate = message.iceCandidate;
+    handleSignallingMessage = (pc, {description, candidate, webcam, screenShare, metadata, ready}, sendMessageFunc) => {
+        if (description || candidate) {
 
-            pc.addIceCandidate(iceCandidate)
-                .catch(err => {
-                    console.log(`adding ice candidate failed ${err}`);
-                });
-        }
-        else if (message.webcam) {
-            if(message.webcam in this.streamId2Content && this.unIdentifiedStreams.map(ms => ms.id).includes(message.webcam)) {
-                const remoteCameraStream = this.unIdentifiedStreams.find(ms => ms.id === message.webcam);
+            try {
+                if (description) {
+                    const offerCollision = (description.type == 'offer') && 
+                        (this.makingOffer || pc.signalingState != "stable");
 
-                this.unIdentifiedStreams = this.unIdentifiedStreams.filter(ms => ms.id !== message.webcam);
+                    this.ignoreOffer = !this.polite && offerCollision;
+                    if(this.ignoreOffer) {
+                        console.log("ignoring offer");
+                        return;
+                    }
+
+                     pc.setRemoteDescription(description)
+                        .then(() => {
+                            if (description.type == 'offer') {
+                                pc.setLocalDescription()
+                                    .then(() => {
+                                        sendMessageFunc({description: pc.localDescription});
+                                    });
+                        }
+                    });
+                } else if(candidate) {
+                    pc.addIceCandidate(candidate)
+                        .catch((err) => {
+                            if (!this.ignoreOffer) {
+                                throw err;
+                            }
+                        });
+                }
+            } catch(err) {
+                console.error(err);
+            }
+        }
+        else if (webcam) {
+            if(webcam in this.streamId2Content && this.unIdentifiedStreams.map(ms => ms.id).includes.webcam) {
+                const remoteCameraStream = this.unIdentifiedStreams.find(ms => ms.id ===webcam);
+
+                this.unIdentifiedStreams = this.unIdentifiedStreams.filter(ms => ms.id !==webcam);
                 this.attachStreamToHtml('remote-camera-container', remoteCameraStream);
             }
             else {
-                this.streamId2Content[message.webcam] = 'webcam';
+                this.streamId2Content[webcam] = 'webcam';
             }
         }
-        else if (message.screenShare) {
-            if(message.screenShare in this.streamId2Content && this.unIdentifiedStreams.map(ms => ms.id).includes(message.screenShare)) {
-                const remoteScreenStream = this.unIdentifiedStreams.find(ms => ms.id === message.screenShare);
+        else if (screenShare) {
+            if(screenShare in this.streamId2Content && this.unIdentifiedStreams.map(ms => ms.id).includes(screenShare)) {
+                const remoteScreenStream = this.unIdentifiedStreams.find(ms => ms.id === screenShare);
 
-                this.unIdentifiedStreams = this.unIdentifiedStreams.filter(ms => ms.id !== message.screenShare);
+                this.unIdentifiedStreams = this.unIdentifiedStreams.filter(ms => ms.id !== screenShare);
                 this.attachStreamToHtml('remote-screen-container', remoteScreenStream);
             }
             else {
-                this.streamId2Content[message.screenShare] = 'screenShare';
+                this.streamId2Content[screenShare] = 'screenShare';
             }
         }
-        else if (message.metadata) {
-            console.log("message received with metadata", message.metadata.name);
-            this.toReceive = message.metadata.size;
-            this.fileName = message.metadata.name;
+        else if (metadata) {
+            console.log("message received with metadata", metadata.name);
+            this.toReceive = metadata.size;
+            this.fileName = metadata.name;
             // TODO: maybe check if the whole file is already received
         }
-        else if (message.ready) {
+        else if (ready) {
+            if(this.onPeerConnectedCallback) {
+                this.onPeerConnectedCallback();
+            }
             console.log("OTHER PEER PRESENT");
         }
     }
 }
 
 function sendData(connectionObj, file, htmlProgressElementId) {
-    if(!connectionObj.joinedFirst) {
-        connectionObj.sendFile1(file, htmlProgressElementId);
-    }
+    connectionObj.sendFile1(file, htmlProgressElementId);
 }
 
 function sendDataExtra(connectionObj, file, htmlProgressElementId) {
-    if(!connectionObj.joinedFirst) {
-        connectionObj.sendFile2(file, htmlProgressElementId);
-    }
+    connectionObj.sendFile2(file, htmlProgressElementId);
 }
 
-function createSocketConnectionInstance(settings={}) {
-    return new Connection(settings);
+function createSocketConnectionInstance(onPeerConnected) {
+    return new Connection(onPeerConnected);
 }
 
 function startCamera(connectionObj) {
