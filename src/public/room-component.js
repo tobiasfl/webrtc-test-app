@@ -3,9 +3,9 @@ import { closeBottomSender, closeTopSender, createSocketConnectionInstance, star
 
 const FIRST_START_TIME = 15000
 const VIDEO_1_START_TIME = FIRST_START_TIME;
-const VIDEO_2_START_TIME = FIRST_START_TIME + 99999999;
-const FILE_TRANSFER_1_START = FIRST_START_TIME + 99999999;
-const FILE_TRANSFER_2_START = FIRST_START_TIME + 99999999;
+const VIDEO_2_START_TIME = FIRST_START_TIME + 999999999;
+const FILE_TRANSFER_1_START = FIRST_START_TIME + 999999999;
+const FILE_TRANSFER_2_START = FIRST_START_TIME + 999999999;
 
 
 const RoomComponent = (props) => {
@@ -45,13 +45,13 @@ const RoomComponent = (props) => {
     }
 
     const startTestFileTransfer = () => {
-        const buffer = new ArrayBuffer(314572800); //about 300MB
+        const buffer = new ArrayBuffer(314572800);
         const file = new File([buffer], "test.txt");
         sendData(socketInstance.current, file, "send-progress");
     }
 
     const startExtraTestFileTransfer = () => {
-        const buffer = new ArrayBuffer(314572800); //about 300MB
+        const buffer = new ArrayBuffer(3145728000); 
         const file = new File([buffer], "test.txt");
         sendDataExtra(socketInstance.current, file, "send-progress2");
     }

@@ -8,10 +8,14 @@ const peerConnectionConfig = { iceServers: [{
 
 const mediaConstraints = {video: true, audio: false};
 
+//How big messages we can send on data channel
 const DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
-const DC_BUFFERED_AMOUNT_LOW_THRESH = 65535;
-//No idea what the proper value for this should be
-const DC_BUFFERED_AMOUNT_MAX_THRESH = 10000000;
+const DC_CHROMIUM_SAFE_CHUNKS_SIZE = 262144;
+
+const DC_BUFFERED_AMOUNT_LOW_THRESH = 262144;
+
+//The full 1MB didn't work for some reason
+const DC_BUFFERED_AMOUNT_MAX_THRESH = 1048576 / 2;
 
 class Connection {
     peerConnection = new RTCPeerConnection(peerConnectionConfig);
@@ -259,11 +263,18 @@ class Connection {
             fileReader.onerror = (error) => console.log("Error reading file:", error);
             fileReader.onabort = (event) => console.log("File reading aborted:", event);
 
-            const chunkSize = DC_MINIMAL_SAFE_CHUNK_SIZE;
+            const chunkSize = DC_CHROMIUM_SAFE_CHUNKS_SIZE;
             let offset = 0;
 
             fileReader.onload = (e) => {
-                sendChannel.send(e.target.result);
+                try {
+                    sendChannel.send(e.target.result);
+                }
+                catch (err) {
+                    console.log(`data channel failed to send: ${err}`);
+                }
+
+
                 offset += e.target.result.byteLength;
                 // To make sure we don't overload the SCTP buffer we also check the bufferedAmount
                 if (offset < file.size && sendChannel.bufferedAmount < DC_BUFFERED_AMOUNT_MAX_THRESH) {
