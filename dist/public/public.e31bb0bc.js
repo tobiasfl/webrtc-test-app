@@ -38502,8 +38502,12 @@ class Socket extends _componentEmitter.Emitter {
     packet.options.compress = this.flags.compress !== false; // event ack callback
 
     if ("function" === typeof args[args.length - 1]) {
-      this.acks[this.ids] = args.pop();
-      packet.id = this.ids++;
+      const id = this.ids++;
+      const ack = args.pop();
+
+      this._registerAckCallback(id, ack);
+
+      packet.id = id;
     }
 
     const isTransportWritable = this.io.engine && this.io.engine.transport && this.io.engine.transport.writable;
@@ -38517,6 +38521,38 @@ class Socket extends _componentEmitter.Emitter {
 
     this.flags = {};
     return this;
+  }
+  /**
+   * @private
+   */
+
+
+  _registerAckCallback(id, ack) {
+    const timeout = this.flags.timeout;
+
+    if (timeout === undefined) {
+      this.acks[id] = ack;
+      return;
+    } // @ts-ignore
+
+
+    const timer = this.io.setTimeoutFn(() => {
+      delete this.acks[id];
+
+      for (let i = 0; i < this.sendBuffer.length; i++) {
+        if (this.sendBuffer[i].id === id) {
+          this.sendBuffer.splice(i, 1);
+        }
+      }
+
+      ack.call(this, new Error("operation has timed out"));
+    }, timeout);
+
+    this.acks[id] = (...args) => {
+      // @ts-ignore
+      this.io.clearTimeoutFn(timer);
+      ack.apply(this, [null, ...args]);
+    };
   }
   /**
    * Sends a packet.
@@ -38624,6 +38660,7 @@ class Socket extends _componentEmitter.Emitter {
         break;
 
       case _socket.PacketType.CONNECT_ERROR:
+        this.destroy();
         const err = new Error(packet.data.message); // @ts-ignore
 
         err.data = packet.data.data;
@@ -38817,6 +38854,27 @@ class Socket extends _componentEmitter.Emitter {
 
   get volatile() {
     this.flags.volatile = true;
+    return this;
+  }
+  /**
+   * Sets a modifier for a subsequent event emission that the callback will be called with an error when the
+   * given number of milliseconds have elapsed without an acknowledgement from the server:
+   *
+   * ```
+   * socket.timeout(5000).emit("my-event", (err) => {
+   *   if (err) {
+   *     // the server did not acknowledge the event in the given delay
+   *   }
+   * });
+   * ```
+   *
+   * @returns self
+   * @public
+   */
+
+
+  timeout(timeout) {
+    this.flags.timeout = timeout;
     return this;
   }
   /**
@@ -39312,15 +39370,7 @@ class Manager extends _componentEmitter.Emitter {
   _close() {
     this.skipReconnect = true;
     this._reconnecting = false;
-
-    if ("opening" === this._readyState) {
-      // `onclose` will not fire because
-      // an open event never happened
-      this.cleanup();
-    }
-
-    this.backoff.reset();
-    this._readyState = "closed";
+    this.onclose("forced close");
     if (this.engine) this.engine.close();
   }
   /**
@@ -39503,10 +39553,9 @@ Object.defineProperty(exports, "__esModule", {
 exports.closeTopSender = closeTopSender;
 exports.closeBottomSender = closeBottomSender;
 exports.createSocketConnectionInstance = createSocketConnectionInstance;
-exports.enableScreenShare = enableScreenShare;
+exports.startScreenShare = startScreenShare;
 exports.sendData = sendData;
-exports.startExtraCamera = startExtraCamera;
-exports.startMainCamera = startMainCamera;
+exports.startCamera = startCamera;
 exports.sendDataExtra = sendDataExtra;
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -39524,16 +39573,22 @@ var peerConnectionConfig = {
   }, {
     urls: 'stun:10.0.3.1:3478'
   }]
-};
+}; //Negotiation based on:
+//https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation
+
 var mediaConstraints = {
   video: true,
   audio: false
-};
+}; //How big messages we can send on data channel
+
 var DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
-var DC_BUFFERED_AMOUNT_LOW_THRESH = 65535;
+var DC_CHROMIUM_SAFE_CHUNKS_SIZE = 262144;
+var DC_BUFFERED_AMOUNT_LOW_THRESH = 262144; //The full 1MB didn't work for some reason
+
+var DC_BUFFERED_AMOUNT_MAX_THRESH = 1048576 / 2;
 
 var Connection = // RTCSenders, so that they can be removed when wanting to close a videostream
-function Connection() {
+function Connection(onPeerConnected) {
   var _this = this;
 
   _classCallCheck(this, Connection);
@@ -39550,6 +39605,8 @@ function Connection() {
 
   _defineProperty(this, "streamId2Content", {});
 
+  _defineProperty(this, "onPeerConnectedCallback", void 0);
+
   _defineProperty(this, "mainSender", null);
 
   _defineProperty(this, "extraSender", null);
@@ -39561,6 +39618,12 @@ function Connection() {
   _defineProperty(this, "toReceive", null);
 
   _defineProperty(this, "fileName", null);
+
+  _defineProperty(this, "makingOffer", false);
+
+  _defineProperty(this, "ignoreOffer", false);
+
+  _defineProperty(this, "polite", false);
 
   _defineProperty(this, "initializeSocketEvents", function () {
     _this.socket.on('connect', function () {
@@ -39592,7 +39655,11 @@ function Connection() {
     });
 
     _this.socket.on('joined', function (roomId) {
-      document.getElementById("main-camera-start-button").removeAttribute("disabled");
+      _this.polite = true;
+
+      if (_this.onPeerConnectedCallback) {
+        _this.onPeerConnectedCallback();
+      }
 
       _this.sendSignallingMessage({
         ready: 'ready'
@@ -39601,47 +39668,51 @@ function Connection() {
   });
 
   _defineProperty(this, "initializePeerEventHandlers", function (pc, sendMessageFunc) {
-    pc.onicecandidate = function (event) {
-      if (event.candidate) {
-        sendMessageFunc({
-          iceCandidate: event.candidate
-        });
-      } else {
-        console.log('End of ice candidates');
-      }
+    pc.onicecandidate = function (_ref) {
+      var candidate = _ref.candidate;
+      return sendMessageFunc({
+        candidate: candidate
+      });
     };
 
-    pc.onconnectionstatechange = function (event) {
+    pc.onconnectionstatechange = function () {
       if (pc.connectionState === 'connected') {
         console.log('RTCPeerConnection is connected');
-      } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
-        console.log('peer connection failed, closed or disconnected');
+      } else if (pc.connectionState === 'failed') {
+        pc.restartIce();
+      } else if (pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+        console.log('peer connection closed or disconnected');
       }
     };
 
-    pc.ontrack = function (event) {
-      console.log("ontrack");
-      var newStream = event.streams[0];
+    pc.ontrack = function (_ref2) {
+      var track = _ref2.track,
+          streams = _ref2.streams;
+      var newStream = streams[0];
 
-      if (newStream.id in _this.streamId2Content) {
-        console.log("I know this stream");
+      track.onunmute = function () {
+        if (newStream.id in _this.streamId2Content) {
+          console.log("I know this stream");
 
-        if (_this.streamId2Content[newStream.id] === 'webcam') {
-          console.log("attaching stream");
+          if (_this.streamId2Content[newStream.id] === 'webcam') {
+            //TODO: There seems to be some bug here so that the stream is sometimes not 
+            //presented, even though it is being transmitted
+            console.log("attaching stream");
 
-          _this.attachStreamToHtml('remote-camera-container', newStream);
-        } else if (_this.streamId2Content[newStream.id] === 'screenShare') {
-          _this.attachStreamToHtml('remote-screen-container', newStream);
+            _this.attachStreamToHtml('remote-camera-container', newStream);
+          } else if (_this.streamId2Content[newStream.id] === 'screenShare') {
+            _this.attachStreamToHtml('remote-screen-container', newStream);
+          } else {
+            console.log('invalid id mapping for new stream');
+          }
+
+          delete _this.streamId2Content[newStream.id];
         } else {
-          console.log('invalid id mapping for new stream');
+          console.log("unidentified stream");
+
+          _this.unIdentifiedStreams.push(newStream);
         }
-
-        delete _this.streamId2Content[newStream.id];
-      } else {
-        console.log("unidentified stream");
-
-        _this.unIdentifiedStreams.push(newStream);
-      }
+      };
     };
 
     pc.onicegatheringstatechange = function (event) {
@@ -39652,15 +39723,16 @@ function Connection() {
       console.log("ice candidate error, code:".concat(event.errorCode, " text:").concat(event.errorText));
     };
 
-    pc.onnegotiationneeded = function (event) {
-      pc.createOffer().then(function (offer) {
-        return pc.setLocalDescription(offer);
-      }).then(function () {
+    pc.onnegotiationneeded = function () {
+      _this.makingOffer = true;
+      pc.setLocalDescription().then(function () {
         sendMessageFunc({
-          'offer': pc.localDescription
+          description: pc.localDescription
         });
       }).catch(function (err) {
         console.log("signalling offer failed: ".concat(err));
+      }).finally(function () {
+        _this.makingOffer = false;
       });
     }; // When the other peer sends on datachannel
 
@@ -39682,9 +39754,6 @@ function Connection() {
   });
 
   _defineProperty(this, "handleDataChannelMessageReceived", function (event) {
-    console.log("Received message on data channel: ".concat(event.data.size));
-    console.log("Received message on data channel: ".concat(event.data.byteLength));
-
     _this.receiveBuffer.push(event.data); //For some reason these differ between chrome and firefox
 
 
@@ -39692,8 +39761,6 @@ function Connection() {
 
     var sendProgressMeter = document.getElementById('receive-progress');
     sendProgressMeter.textContent = "".concat(_this.receivedSize, "/").concat(_this.toReceive);
-    console.log("this.receivedSize", _this.receivedSize);
-    console.log("this.toReceive", _this.toReceive);
 
     if (_this.toReceive !== null && _this.receivedSize === _this.toReceive) {
       console.log("received the whole file now");
@@ -39714,61 +39781,58 @@ function Connection() {
 
   _defineProperty(this, "startLocalScreenShare", function () {
     //TODO: firefox struggles with this
-    navigator.mediaDevices.getDisplayMedia(mediaConstraints).then(function (stream) {
-      _this.extraSender = _this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
-
-      _this.attachStreamToHtml('local-screen-container', stream);
-
-      _this.sendSignallingMessage2({
-        'screenShare': stream.id
-      });
-    }).catch(function (err) {
-      console.log("adding local screen share failed: ".concat(err));
-    });
-  });
-
-  _defineProperty(this, "startExtraCamera", function () {
-    navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
-      _this.extraSender = _this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
-
-      _this.attachStreamToHtml('local-screen-container', stream);
-
-      _this.sendSignallingMessage2({
-        'screenShare': stream.id
-      });
-    }).catch(function (err) {
-      console.log("adding extra local camera failed: ".concat(err));
+    return navigator.mediaDevices.getDisplayMedia(mediaConstraints).then(function (stream) {
+      return _this.handleNewStreamStarted(stream);
     });
   });
 
   _defineProperty(this, "startLocalCamera", function () {
-    console.log("starting local video");
-    navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
-      _this.mainSender = _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
+    return navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
+      return _this.handleNewStreamStarted(stream);
+    });
+  });
 
-      _this.attachStreamToHtml('local-camera-container', stream);
+  _defineProperty(this, "handleNewStreamStarted", function (stream) {
+    if (_this.mainSender === null) {
+      _this.mainSender = _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
 
       _this.sendSignallingMessage({
         'webcam': stream.id
       });
-    }).catch(function (err) {
-      console.log("adding local camera failed: ".concat(err));
-    });
+
+      return stream;
+    } else if (_this.extraSender === null) {
+      _this.extraSender = _this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
+
+      _this.sendSignallingMessage2({
+        'screenShare': stream.id
+      });
+
+      return stream;
+    } else {
+      throw "Only two streams can be running at the same time";
+    }
   });
 
   _defineProperty(this, "closeMainSender", function () {
-    if (_this.mainSender) {
+    if (_this.mainSender !== null) {
       _this.peerConnection.removeTrack(_this.mainSender);
 
       _this.peerConnection.close();
+
+      document.getElementById('local-camera-container').srcObject = null;
+      _this.mainSender = null;
     }
   });
 
   _defineProperty(this, "closeExtraSender", function () {
-    if (_this.extraSender) {
+    if (_this.extraSender !== null) {
       _this.peerConnection2.removeTrack(_this.extraSender);
 
       _this.peerConnection2.close();
+
+      document.getElementById('local-screen-container').srcObject = null;
+      _this.extraSender = null;
     }
   });
 
@@ -39793,39 +39857,47 @@ function Connection() {
 
       var sendChannel = pc.createDataChannel("sendChannel");
       sendChannel.bufferedAmountLowThreshold = DC_BUFFERED_AMOUNT_LOW_THRESH;
+      var fileReader = new FileReader();
+
+      fileReader.onerror = function (error) {
+        return console.log("Error reading file:", error);
+      };
+
+      fileReader.onabort = function (event) {
+        return console.log("File reading aborted:", event);
+      };
+
+      var chunkSize = DC_CHROMIUM_SAFE_CHUNKS_SIZE;
+      var offset = 0;
+
+      fileReader.onload = function (e) {
+        try {
+          sendChannel.send(e.target.result);
+        } catch (err) {
+          console.log("data channel failed to send: ".concat(err));
+        }
+
+        offset += e.target.result.byteLength; // To make sure we don't overload the SCTP buffer we also check the bufferedAmount
+
+        if (offset < file.size && sendChannel.bufferedAmount < DC_BUFFERED_AMOUNT_MAX_THRESH) {
+          readSlice(offset);
+        }
+
+        var sendProgressMeter = document.getElementById(htmlProgressElementId);
+        sendProgressMeter.textContent = "".concat(offset, "/").concat(file.size);
+      };
+
+      var readSlice = function readSlice(o) {
+        var slice = file.slice(offset, o + chunkSize); //THROWS: 
+        //Uncaught DOMException: Failed to execute 
+        //'readAsArrayBuffer' on 'FileReader': 
+        //The object is already busy reading Blobs.
+
+        fileReader.readAsArrayBuffer(slice);
+      };
 
       sendChannel.onopen = function (event) {
-        console.log("sending a file on data channel!");
-        var chunkSize = DC_MINIMAL_SAFE_CHUNK_SIZE;
-        var offset = 0;
-        var fileReader = new FileReader();
-
-        fileReader.onerror = function (error) {
-          return console.log("Error reading file:", error);
-        };
-
-        fileReader.onabort = function (event) {
-          return console.log("File reading aborted:", event);
-        };
-
-        fileReader.onload = function (e) {
-          console.log('Sending another slice with length ' + e.target.result.byteLength);
-          sendChannel.send(e.target.result);
-          offset += e.target.result.byteLength;
-
-          if (offset < file.size) {
-            //sendChannel.bufferedAmount
-            readSlice(offset);
-          }
-
-          var sendProgressMeter = document.getElementById(htmlProgressElementId);
-          sendProgressMeter.textContent = "".concat(offset, "/").concat(file.size);
-        };
-
-        var readSlice = function readSlice(o) {
-          var slice = file.slice(offset, o + chunkSize);
-          fileReader.readAsArrayBuffer(slice);
-        };
+        console.log("sending a file on data channel!"); // To start the file reading process
 
         readSlice(0);
       };
@@ -39840,11 +39912,13 @@ function Connection() {
 
       sendChannel.onerror = function (event) {
         console.log("SendChannel error: ".concat(event.error));
-        console.log("sendChannel bufferedAmount: ".concat(sendChannel.bufferedAmount));
       };
 
       sendChannel.onbufferedamountlow = function (event) {
-        console.log("onbufferedamountlow event fired");
+        // Checking that FileReader is not alread busy loading, else it might crash 
+        if (offset < file.size && fileReader.readyState !== fileReader.LOADING) {
+          readSlice(offset);
+        }
       };
     } catch (e) {
       console.log("failed to create data channel ".concat(e));
@@ -39859,73 +39933,97 @@ function Connection() {
     _this.socket.emit('message2', message, _this.roomId);
   });
 
-  _defineProperty(this, "handleSignallingMessage", function (pc, message, sendMessageFunc) {
-    if (message.offer) {
-      pc.setRemoteDescription(new RTCSessionDescription(message.offer)).then(function () {
-        return pc.createAnswer();
-      }).then(function (answer) {
-        return pc.setLocalDescription(answer);
-      }).then(function () {
-        sendMessageFunc({
-          'answer': pc.localDescription
-        });
-      }).catch(function (err) {
-        console.log("signalling answer failed: ".concat(err));
-      });
-    } else if (message.answer) {
-      pc.setRemoteDescription(new RTCSessionDescription(message.answer));
-    } else if (message.iceCandidate) {
-      var iceCandidate = message.iceCandidate;
-      pc.addIceCandidate(iceCandidate).catch(function (err) {
-        console.log("adding ice candidate failed ".concat(err));
-      });
-    } else if (message.webcam) {
-      if (message.webcam in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
+  _defineProperty(this, "handleSignallingMessage", function (pc, _ref3, sendMessageFunc) {
+    var description = _ref3.description,
+        candidate = _ref3.candidate,
+        webcam = _ref3.webcam,
+        screenShare = _ref3.screenShare,
+        metadata = _ref3.metadata,
+        ready = _ref3.ready;
+
+    if (description || candidate) {
+      try {
+        if (description) {
+          var offerCollision = description.type == 'offer' && (_this.makingOffer || pc.signalingState != "stable");
+          _this.ignoreOffer = !_this.polite && offerCollision;
+
+          if (_this.ignoreOffer) {
+            console.log("ignoring offer");
+            return;
+          }
+
+          pc.setRemoteDescription(description).then(function () {
+            if (description.type == 'offer') {
+              pc.setLocalDescription().then(function () {
+                sendMessageFunc({
+                  description: pc.localDescription
+                });
+              });
+            }
+          });
+        } else if (candidate) {
+          pc.addIceCandidate(candidate).catch(function (err) {
+            if (!_this.ignoreOffer) {
+              throw err;
+            }
+          });
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    } else if (webcam) {
+      if (webcam in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
         return ms.id;
-      }).includes(message.webcam)) {
+      }).includes.webcam) {
         var remoteCameraStream = _this.unIdentifiedStreams.find(function (ms) {
-          return ms.id === message.webcam;
+          return ms.id === webcam;
         });
 
         _this.unIdentifiedStreams = _this.unIdentifiedStreams.filter(function (ms) {
-          return ms.id !== message.webcam;
+          return ms.id !== webcam;
         });
 
         _this.attachStreamToHtml('remote-camera-container', remoteCameraStream);
       } else {
-        _this.streamId2Content[message.webcam] = 'webcam';
+        _this.streamId2Content[webcam] = 'webcam';
       }
-    } else if (message.screenShare) {
-      if (message.screenShare in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
+    } else if (screenShare) {
+      if (screenShare in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
         return ms.id;
-      }).includes(message.screenShare)) {
+      }).includes(screenShare)) {
         var remoteScreenStream = _this.unIdentifiedStreams.find(function (ms) {
-          return ms.id === message.screenShare;
+          return ms.id === screenShare;
         });
 
         _this.unIdentifiedStreams = _this.unIdentifiedStreams.filter(function (ms) {
-          return ms.id !== message.screenShare;
+          return ms.id !== screenShare;
         });
 
         _this.attachStreamToHtml('remote-screen-container', remoteScreenStream);
       } else {
-        _this.streamId2Content[message.screenShare] = 'screenShare';
+        _this.streamId2Content[screenShare] = 'screenShare';
       }
-    } else if (message.metadata) {
-      console.log("message received with metadata", message.metadata.name);
-      _this.toReceive = message.metadata.size;
-      _this.fileName = message.metadata.name; // TODO: maybe check if the whole file is already received
-    } else if (message.ready) {
+    } else if (metadata) {
+      console.log("message received with metadata", metadata.name);
+      _this.toReceive = metadata.size;
+      _this.fileName = metadata.name; // TODO: maybe check if the whole file is already received
+    } else if (ready) {
+      if (_this.onPeerConnectedCallback) {
+        _this.onPeerConnectedCallback();
+      }
+
       console.log("OTHER PEER PRESENT");
-      document.getElementById("main-camera-start-button").removeAttribute("disabled");
     }
   });
 
-  //TODO: Could get callbacks in constructor for what to de when connected etc (e.g. enable/disable buttons)
+  if (onPeerConnected) {
+    this.onPeerConnectedCallback = onPeerConnected;
+  } //TODO: Could get callbacks in constructor for what to de when connected etc (e.g. enable/disable buttons)
+
+
   this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
   this.initializePeerEventHandlers(this.peerConnection2, this.sendSignallingMessage2);
   this.initializeSocketEvents();
-  document.getElementById("main-camera-start-button").setAttribute("disabled", "disabled");
 } // Signaling server interaction 
 // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
 ;
@@ -39938,21 +40036,16 @@ function sendDataExtra(connectionObj, file, htmlProgressElementId) {
   connectionObj.sendFile2(file, htmlProgressElementId);
 }
 
-function createSocketConnectionInstance() {
-  var settings = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
-  return new Connection(settings);
+function createSocketConnectionInstance(onPeerConnected) {
+  return new Connection(onPeerConnected);
 }
 
-function startMainCamera(connectionObj) {
-  connectionObj.startLocalCamera();
+function startCamera(connectionObj) {
+  return connectionObj.startLocalCamera();
 }
 
-function enableScreenShare(connectionObj) {
-  connectionObj.startLocalScreenShare();
-}
-
-function startExtraCamera(connectionObj) {
-  connectionObj.startExtraCamera();
+function startScreenShare(connectionObj) {
+  return connectionObj.startLocalScreenShare();
 }
 
 function closeTopSender(connectionObj) {
@@ -39990,6 +40083,12 @@ function _iterableToArrayLimit(arr, i) { var _i = arr == null ? null : typeof Sy
 
 function _arrayWithHoles(arr) { if (Array.isArray(arr)) return arr; }
 
+var FIRST_START_TIME = 10000;
+var NO_START_TIME = 99999999999;
+var VIDEO_1_START_TIME = FIRST_START_TIME;
+var FILE_TRANSFER_1_START = FIRST_START_TIME;
+var urlSearchParams = ['video', 'data'];
+
 var RoomComponent = function RoomComponent(props) {
   var socketInstance = (0, _react.useRef)(null);
 
@@ -39998,12 +40097,20 @@ var RoomComponent = function RoomComponent(props) {
       chosenFile = _useState2[0],
       setChosenFile = _useState2[1];
 
+  var urlParams = new URLSearchParams(window.location.search);
   (0, _react.useEffect)(function () {
-    startConnection();
+    socketInstance.current = (0, _connection.createSocketConnectionInstance)(setTimers);
   }, []);
 
-  var startConnection = function startConnection() {
-    socketInstance.current = (0, _connection.createSocketConnectionInstance)();
+  var urlFlagPresent = function urlFlagPresent(parameter) {
+    return urlParams.has(parameter);
+  };
+
+  var setTimers = function setTimers() {
+    setTimeout(startMainVideoStream, urlFlagPresent('video') ? FIRST_START_TIME : NO_START_TIME);
+    setTimeout(startExtraVideoStream, NO_START_TIME);
+    setTimeout(startTestFileTransfer, urlFlagPresent('data') ? FIRST_START_TIME : NO_START_TIME);
+    setTimeout(startExtraTestFileTransfer, NO_START_TIME);
   };
 
   var handleFileInputChange = function handleFileInputChange(event) {
@@ -40030,17 +40137,52 @@ var RoomComponent = function RoomComponent(props) {
     }
   };
 
+  var startTestFileTransfer = function startTestFileTransfer() {
+    var buffer = new ArrayBuffer(314572800);
+    var file = new File([buffer], "test.txt");
+    (0, _connection.sendData)(socketInstance.current, file, "send-progress");
+  };
+
+  var startExtraTestFileTransfer = function startExtraTestFileTransfer() {
+    var buffer = new ArrayBuffer(3145728000);
+    var file = new File([buffer], "test.txt");
+    (0, _connection.sendDataExtra)(socketInstance.current, file, "send-progress2");
+  };
+
+  var startMainVideoStream = function startMainVideoStream() {
+    (0, _connection.startCamera)(socketInstance.current).then(function (stream) {
+      document.getElementById("local-camera-container").srcObject = stream;
+    }).catch(function (err) {
+      console.log("Starting local video failed: ".concat(err));
+    });
+  };
+
+  var startExtraVideoStream = function startExtraVideoStream() {
+    (0, _connection.startCamera)(socketInstance.current).then(function (stream) {
+      document.getElementById("local-screen-container").srcObject = stream;
+    }).catch(function (err) {
+      console.log("Starting extra local video failed: ".concat(err));
+    });
+  };
+
+  var startMainScreenShare = function startMainScreenShare() {
+    (0, _connection.startScreenShare)(socketInstance.current).then(function (stream) {
+      document.getElementById("local-camera-container").srcObject = stream;
+    }).catch(function (err) {
+      console.log("Starting local screen share failed: ".concat(err));
+    });
+  };
+
   return /*#__PURE__*/_react.default.createElement(_react.default.Fragment, null, /*#__PURE__*/_react.default.createElement("table", null, /*#__PURE__*/_react.default.createElement("tbody", null, /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
     id: "local-camera-container",
     autoPlay: true,
     width: "640",
     height: "480"
   }), /*#__PURE__*/_react.default.createElement("div", null, "Local video"), /*#__PURE__*/_react.default.createElement("button", {
-    id: "main-camera-start-button",
-    onClick: function onClick() {
-      return (0, _connection.startMainCamera)(socketInstance.current);
-    }
+    onClick: startMainVideoStream
   }, "Start camera stream"), /*#__PURE__*/_react.default.createElement("button", {
+    onClick: startMainScreenShare
+  }, "Start screen share"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: function onClick() {
       return (0, _connection.closeTopSender)(socketInstance.current);
     }
@@ -40055,15 +40197,11 @@ var RoomComponent = function RoomComponent(props) {
     width: "640",
     height: "480"
   }), /*#__PURE__*/_react.default.createElement("div", null, "Local screen"), /*#__PURE__*/_react.default.createElement("button", {
-    id: "screen-share-start-button",
     onClick: function onClick() {
-      return (0, _connection.enableScreenShare)(socketInstance.current);
+      return enableScreenShare(socketInstance.current);
     }
   }, "Start screen share"), /*#__PURE__*/_react.default.createElement("button", {
-    id: "extra-camera-start-button",
-    onClick: function onClick() {
-      return (0, _connection.startExtraCamera)(socketInstance.current);
-    }
+    onClick: startExtraVideoStream
   }, "Start extra camera stream"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: function onClick() {
       return (0, _connection.closeBottomSender)(socketInstance.current);
@@ -40212,7 +40350,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "42463" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "34919" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

@@ -19,7 +19,6 @@ const RoomComponent = (props) => {
     }, []);
 
     const urlFlagPresent = (parameter) => urlParams.has(parameter);
-    
 
     const setTimers = () => {
         setTimeout(startMainVideoStream, urlFlagPresent('video') ? FIRST_START_TIME : NO_START_TIME);

@@ -117,6 +117,8 @@ class Connection {
                     console.log("I know this stream");
                     if (this.streamId2Content[newStream.id] === 'webcam')
                     {
+                        //TODO: There seems to be some bug here so that the stream is sometimes not 
+                        //presented, even though it is being transmitted
                         console.log("attaching stream");
                         this.attachStreamToHtml('remote-camera-container', newStream);
                     }
