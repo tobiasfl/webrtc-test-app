@@ -6,6 +6,8 @@ const NO_START_TIME = 99999999999;
 const VIDEO_1_START_TIME = FIRST_START_TIME;
 const FILE_TRANSFER_1_START = FIRST_START_TIME;
 
+const TEST_DATA_ARRAY_SIZE = 314572800;
+
 const urlSearchParams = ['video','data'];
 
 
@@ -52,13 +54,13 @@ const RoomComponent = (props) => {
     }
 
     const startTestFileTransfer = () => {
-        const buffer = new ArrayBuffer(314572800);
+        const buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE);
         const file = new File([buffer], "test.txt");
         sendData(socketInstance.current, file, "send-progress");
     }
 
     const startExtraTestFileTransfer = () => {
-        const buffer = new ArrayBuffer(3145728000); 
+        const buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE); 
         const file = new File([buffer], "test.txt");
         sendDataExtra(socketInstance.current, file, "send-progress2");
     }

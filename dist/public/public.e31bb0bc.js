@@ -39582,10 +39582,11 @@ var mediaConstraints = {
 }; //How big messages we can send on data channel
 
 var DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
-var DC_CHROMIUM_SAFE_CHUNKS_SIZE = 262144;
-var DC_BUFFERED_AMOUNT_LOW_THRESH = 262144; //The full 1MB didn't work for some reason
+var DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE = 262144;
+var DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE / 2;
+var DC_BUFFERED_AMOUNT_LOW_THRESH = 262144; //The full 500KB
 
-var DC_BUFFERED_AMOUNT_MAX_THRESH = 1048576 / 2;
+var DC_BUFFERED_AMOUNT_MAX_THRESH = 524288;
 
 var Connection = // RTCSenders, so that they can be removed when wanting to close a videostream
 function Connection(onPeerConnected) {
@@ -39867,7 +39868,7 @@ function Connection(onPeerConnected) {
         return console.log("File reading aborted:", event);
       };
 
-      var chunkSize = DC_CHROMIUM_SAFE_CHUNKS_SIZE;
+      var chunkSize = DC_CHUNK_SIZE;
       var offset = 0;
 
       fileReader.onload = function (e) {
@@ -39888,11 +39889,7 @@ function Connection(onPeerConnected) {
       };
 
       var readSlice = function readSlice(o) {
-        var slice = file.slice(offset, o + chunkSize); //THROWS: 
-        //Uncaught DOMException: Failed to execute 
-        //'readAsArrayBuffer' on 'FileReader': 
-        //The object is already busy reading Blobs.
-
+        var slice = file.slice(offset, o + chunkSize);
         fileReader.readAsArrayBuffer(slice);
       };
 
@@ -40087,6 +40084,7 @@ var FIRST_START_TIME = 10000;
 var NO_START_TIME = 99999999999;
 var VIDEO_1_START_TIME = FIRST_START_TIME;
 var FILE_TRANSFER_1_START = FIRST_START_TIME;
+var TEST_DATA_ARRAY_SIZE = 314572800;
 var urlSearchParams = ['video', 'data'];
 
 var RoomComponent = function RoomComponent(props) {
@@ -40138,13 +40136,13 @@ var RoomComponent = function RoomComponent(props) {
   };
 
   var startTestFileTransfer = function startTestFileTransfer() {
-    var buffer = new ArrayBuffer(314572800);
+    var buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE);
     var file = new File([buffer], "test.txt");
     (0, _connection.sendData)(socketInstance.current, file, "send-progress");
   };
 
   var startExtraTestFileTransfer = function startExtraTestFileTransfer() {
-    var buffer = new ArrayBuffer(3145728000);
+    var buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE);
     var file = new File([buffer], "test.txt");
     (0, _connection.sendDataExtra)(socketInstance.current, file, "send-progress2");
   };
@@ -40350,7 +40348,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "34919" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "37365" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

@@ -15,12 +15,14 @@ const mediaConstraints = {video: true, audio: false};
 
 //How big messages we can send on data channel
 const DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
-const DC_CHROMIUM_SAFE_CHUNKS_SIZE = 262144;
+const DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE = 262144;
+
+const DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE / 2;
 
 const DC_BUFFERED_AMOUNT_LOW_THRESH = 262144;
 
-//The full 1MB didn't work for some reason
-const DC_BUFFERED_AMOUNT_MAX_THRESH = 1048576 / 2;
+//The full 500KB
+const DC_BUFFERED_AMOUNT_MAX_THRESH = 524288;
 
 class Connection {
     peerConnection = new RTCPeerConnection(peerConnectionConfig);
@@ -275,7 +277,7 @@ class Connection {
             fileReader.onerror = (error) => console.log("Error reading file:", error);
             fileReader.onabort = (event) => console.log("File reading aborted:", event);
 
-            const chunkSize = DC_CHROMIUM_SAFE_CHUNKS_SIZE;
+            const chunkSize = DC_CHUNK_SIZE;
             let offset = 0;
 
             fileReader.onload = (e) => {
@@ -299,10 +301,6 @@ class Connection {
 
             const readSlice = o => {
                 const slice = file.slice(offset, o + chunkSize);
-                //THROWS: 
-                //Uncaught DOMException: Failed to execute 
-                //'readAsArrayBuffer' on 'FileReader': 
-                //The object is already busy reading Blobs.
                 fileReader.readAsArrayBuffer(slice);
             }
 
