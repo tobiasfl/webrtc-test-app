@@ -39583,10 +39583,10 @@ var mediaConstraints = {
 
 var DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
 var DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE = 262144;
-var DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE / 2;
-var DC_BUFFERED_AMOUNT_LOW_THRESH = 262144; //The full 500KB
+var DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE / 2; //The full 1MB
 
-var DC_BUFFERED_AMOUNT_MAX_THRESH = 524288;
+var DC_BUFFERED_AMOUNT_MAX_THRESH = 1048576;
+var DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_SIZE;
 
 var Connection = // RTCSenders, so that they can be removed when wanting to close a videostream
 function Connection(onPeerConnected) {
@@ -40348,7 +40348,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "37365" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "40077" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};
