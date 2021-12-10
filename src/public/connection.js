@@ -17,7 +17,7 @@ const mediaConstraints = {video: true, audio: false};
 const DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
 const DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE = 262144;
 
-const DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE / 2;
+const DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE;
 
 
 //The full 1MB
