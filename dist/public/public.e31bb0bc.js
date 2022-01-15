@@ -39583,9 +39583,9 @@ var mediaConstraints = {
 
 var DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
 var DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE = 262144;
-var DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE; //The full 1MB
+var DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE; //16MiB in bytes
 
-var DC_BUFFERED_AMOUNT_MAX_THRESH = 1048576;
+var DC_BUFFERED_AMOUNT_MAX_THRESH = 1677216;
 var DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_SIZE;
 
 var Connection = // RTCSenders, so that they can be removed when wanting to close a videostream
@@ -40084,7 +40084,7 @@ var FIRST_START_TIME = 10000;
 var NO_START_TIME = 99999999999;
 var VIDEO_1_START_TIME = FIRST_START_TIME;
 var FILE_TRANSFER_1_START = FIRST_START_TIME;
-var TEST_DATA_ARRAY_SIZE = 314572800;
+var TEST_DATA_ARRAY_SIZE = 500000000;
 var urlSearchParams = ['video', 'data'];
 
 var RoomComponent = function RoomComponent(props) {
@@ -40348,7 +40348,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "41485" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "40671" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

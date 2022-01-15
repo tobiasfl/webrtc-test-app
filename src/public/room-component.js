@@ -5,8 +5,8 @@ const FIRST_START_TIME = 10000
 const NO_START_TIME = 99999999999;
 const VIDEO_1_START_TIME = FIRST_START_TIME;
 const FILE_TRANSFER_1_START = FIRST_START_TIME;
-
-const TEST_DATA_ARRAY_SIZE = 314572800;
+                            
+const TEST_DATA_ARRAY_SIZE = 500000000;
 
 const urlSearchParams = ['video','data'];
 
