@@ -24,7 +24,7 @@ const RoomComponent = (props) => {
 
     const setTimers = () => {
         setTimeout(startMainVideoStream, urlFlagPresent('video') ? FIRST_START_TIME : NO_START_TIME);
-        setTimeout(startExtraVideoStream, NO_START_TIME);
+        setTimeout(startExtraVideoStream, urlFlagPresent('video2') ? FIRST_START_TIME : NO_START_TIME);
         setTimeout(startTestFileTransfer, urlFlagPresent('data') ? FIRST_START_TIME : NO_START_TIME);
         setTimeout(startExtraTestFileTransfer, NO_START_TIME);
     }
