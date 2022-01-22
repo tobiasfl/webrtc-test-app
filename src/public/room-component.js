@@ -1,99 +1,121 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { closeBottomSender, closeTopSender, createSocketConnectionInstance, startScreenShare, sendData, startCamera, sendDataExtra } from './connection';
+import Connection from './connection';
 
-const FIRST_START_TIME = 10000
-const NO_START_TIME = 99999999999;
-const VIDEO_1_START_TIME = FIRST_START_TIME;
-const FILE_TRANSFER_1_START = FIRST_START_TIME;
+//setTimeout is stored as signed int 32, so this is max value
+const INFINITY_TIMEOUT = 2147483647;
                             
-const TEST_DATA_ARRAY_SIZE = 500000000;
-
-const urlSearchParams = ['video','data'];
-
-
 const RoomComponent = (props) => {
     let socketInstance = useRef(null);
+
     const [chosenFile, setChosenFile] = useState(null);
+    const [fileTransferProgress, setFileTransferProgress] = useState(0);
+    const [fileTransferSize, setFileTransferSize] = useState(0);
+    const [dataTransfersProgress, setDataTransfersProgress] = useState({});
+
     const urlParams = new URLSearchParams(window.location.search);
 
     useEffect(() => {
-        socketInstance.current = createSocketConnectionInstance(setTimers);
+        socketInstance.current = new Connection(setTestTimeouts, handleRemoteStream);
     }, []);
 
-    const urlFlagPresent = (parameter) => urlParams.has(parameter);
+    const setTestTimeouts = () => {
+        const rtp1Start = getIntUrlParam('rtp1start') ? getIntUrlParam('rtp1start') : INFINITY_TIMEOUT;
+        const rtp1End = getIntUrlParam('rtp1end') ? getIntUrlParam('rtp1end') : INFINITY_TIMEOUT;
+        const rtp2Start = getIntUrlParam('rtp2start') ? getIntUrlParam('rtp2start') : INFINITY_TIMEOUT;
+        const rtp2End = getIntUrlParam('rtp2end') ? getIntUrlParam('rtp2end') : INFINITY_TIMEOUT;
+        const sctp1Start = getIntUrlParam('sctp1start') ? getIntUrlParam('sctp1start') : INFINITY_TIMEOUT;
+        const sctp1End = getIntUrlParam('sctp1end') ? getIntUrlParam('sctp1end') : INFINITY_TIMEOUT;
 
-    const setTimers = () => {
-        setTimeout(startMainVideoStream, urlFlagPresent('video') ? FIRST_START_TIME : NO_START_TIME);
-        setTimeout(startExtraVideoStream, urlFlagPresent('video2') ? FIRST_START_TIME : NO_START_TIME);
-        setTimeout(startTestFileTransfer, urlFlagPresent('data') ? FIRST_START_TIME : NO_START_TIME);
-        setTimeout(startExtraTestFileTransfer, NO_START_TIME);
+        setTimeout(startMainVideo, rtp1Start);
+        setTimeout(closeMainVideo, rtp1End);
+        setTimeout(startExtraVideoStream, rtp2Start);
+        setTimeout(closeExtraVideo, rtp2End);
+        setTimeout(() => startTestDataTransfer(sctp1End-sctp1Start), sctp1Start);
+    }
+
+    const urlFlagPresent = (parameter) => urlParams.has(parameter);
+    const getIntUrlParam = (parameter) => {
+        const paramVal = urlParams.get(parameter);
+        return paramVal ? parseInt(paramVal) : null;
     }
 
     const handleFileInputChange = (event) => {
         const file = event.target.files[0];
-        if (!file) {
-            console.log("No file chosen");
-            setChosenFile(null);
-        }
-        else {
-            console.log("File was chosen");
-            setChosenFile(file);
-        }
+        setChosenFile(file ? file : null);
     }
 
-    const handleSendFileButtonClicked = (progressId) => {
+    const handleSendFileButtonClicked = () => {
         if(chosenFile !== null) {
-            sendData(socketInstance.current, chosenFile, progressId);
+            setFileTransferSize(chosenFile.size);
+            socketInstance.current.sendFile(chosenFile, onFileTransferProgress);
         }
     }
 
-    const handleSendFileButtonClicked2 = (progressId) => {
-        if(chosenFile !== null) {
-            sendDataExtra(socketInstance.current, chosenFile, progressId);
-        }
+    const startTestDataTransfer = (durationMS) => {
+        socketInstance.current.runDataChannelTest(durationMS, onDataTransferProgress);
     }
 
-    const startTestFileTransfer = () => {
-        const buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE);
-        const file = new File([buffer], "test.txt");
-        sendData(socketInstance.current, file, "send-progress");
-    }
-
-    const startExtraTestFileTransfer = () => {
-        const buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE); 
-        const file = new File([buffer], "test.txt");
-        sendDataExtra(socketInstance.current, file, "send-progress2");
-    }
-
-
-    const startMainVideoStream = () => {
-        startCamera(socketInstance.current)
+    const startMainVideo = () => {
+        socketInstance.current.startCamera()
             .then(stream => {
-                document.getElementById("local-camera-container").srcObject = stream;
+                document.getElementById("local-media-container").srcObject = stream;
             })
             .catch(err => {
                 console.log(`Starting local video failed: ${err}`);
             })
     }
 
+    const closeMainVideo = () => {
+        socketInstance.current.closeMainSender();
+        document.getElementById('local-media-container').srcObject = null;
+    }
+
     const startExtraVideoStream = () => {
-        startCamera(socketInstance.current)
+        socketInstance.current.startCamera()
             .then(stream => {
-                document.getElementById("local-screen-container").srcObject = stream;
+                document.getElementById("local-media-container2").srcObject = stream;
             })
             .catch(err => {
                 console.log(`Starting extra local video failed: ${err}`);
             })
     }
 
+    const closeExtraVideo = () => {
+        socketInstance.current.closeExtraSender();
+        document.getElementById('local-media-container2').srcObject = null;
+    }
+
     const startMainScreenShare = () => {
-        startScreenShare(socketInstance.current)
+        socketInstance.current.startScreenShare()
             .then(stream => {
-                document.getElementById("local-camera-container").srcObject = stream;
+                document.getElementById("local-media-container").srcObject = stream;
             })
             .catch(err => {
                 console.log(`Starting local screen share failed: ${err}`);
             })
+    }
+
+    const handleRemoteStream = streamObj => {
+        console.log("Handling remote stream.");
+        if (!document.getElementById("remote-media-container").srcObject) {
+            document.getElementById("remote-media-container").srcObject = streamObj;
+        }
+        else if (!document.getElementById("remote-media-container2").srcObject) {
+            document.getElementById("remote-media-container2").srcObject = streamObj;
+        }
+        else {
+            console.log("Error: More than 2 remote streams are being received.");
+        }
+    }
+
+    const onFileTransferProgress = (dataChannelId, progressBytes) => {
+        setFileTransferProgress(progressBytes);
+    }
+
+    const onDataTransferProgress = (dataChannelId, progressBytes) => {
+        const newObj = {};
+        newObj[dataChannelId] = progressBytes;
+        setDataTransfersProgress({...dataTransfersProgress, ...newObj});
     }
 
     return (
@@ -103,34 +125,34 @@ const RoomComponent = (props) => {
                     <tr>
                         <td>
                             <div>
-                                <video id="local-camera-container" autoPlay width="640" height="480" ></video>
-                                <div>Local video</div>
-                                <button onClick={startMainVideoStream}>Start camera stream</button>
+                                <video id="local-media-container" autoPlay width="640" height="480" ></video>
+                                <div>Local media#1</div>
+                                <button onClick={startMainVideo}>Start camera stream</button>
                                 <button onClick={startMainScreenShare}>Start screen share</button>
-                                <button onClick={() => closeTopSender(socketInstance.current)}>Close</button>
+                                <button onClick={closeMainVideo}>Close</button>
                             </div>
                         </td>
                         <td>
                             <div>
-                                <video id="remote-camera-container" autoPlay width="640" height="480"></video>
-                                <div>Remote camera</div>
+                                <video id="remote-media-container" autoPlay width="640" height="480"></video>
+                                <div>Remote media#1</div>
                             </div>
                         </td>
                     </tr>
                     <tr>
                         <td>
                             <div>
-                                <video id="local-screen-container" autoPlay width="640" height="480"></video>
-                                <div>Local screen</div>
+                                <video id="local-media-container2" autoPlay width="640" height="480"></video>
+                                <div>Local media#1</div>
                                 <button onClick={() => enableScreenShare(socketInstance.current)}>Start screen share</button>
                                 <button onClick={startExtraVideoStream}>Start extra camera stream</button>
-                                <button onClick={() => closeBottomSender(socketInstance.current)}>Close</button>
+                                <button onClick={closeExtraVideo}>Close</button>
                             </div>
                         </td>
                         <td>
                             <div>
-                                <video id="remote-screen-container" autoPlay width="640" height="480"></video>
-                                <div>Remote screen</div>
+                                <video id="remote-media-container2" autoPlay width="640" height="480"></video>
+                                <div>Remote media#2</div>
                             </div>
                         </td>
                     </tr>
@@ -144,27 +166,25 @@ const RoomComponent = (props) => {
                     <tbody>
                         <tr>
                             <td>
-                                <button onClick={() => handleSendFileButtonClicked("send-progress")} disabled={chosenFile===null}>Send file</button>
+                                <button onClick={() => handleSendFileButtonClicked()} disabled={chosenFile===null}>Send file</button>
                                 <a id="download"></a>
-                                <div >Send progress:</div>
+                                <div >Send progress:{fileTransferProgress}/{fileTransferSize}</div>
                                 <div id="send-progress"></div>
                                 <div >Receive progress:</div>
                                 <div id="receive-progress"></div>
                             </td>
-                            <td>
-                                <button onClick={() => handleSendFileButtonClicked2("send-progress2")} disabled={chosenFile===null}>Send file</button>
-                                <a id="download2"></a>
-                                <div >Send progress:</div>
-                                <div id="send-progress2"></div>
-                                <div >Receive progress:</div>
-                                <div id="receive-progress2"></div>
-                            </td>
+                            {Object.entries(dataTransfersProgress).map(e => 
+                                <td key={e[0]}>
+                                    <div>RTCDataChannelId: {e[0]}</div>
+                                    <div>Sent bytes: {e[1]}</div>
+                                </td>
+                            )}
                         </tr>
                     </tbody>
                 </table>
             </section>
         </React.Fragment>
-    )
+    );
 }
 
 export default RoomComponent;

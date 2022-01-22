@@ -19,6 +19,8 @@ const DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE = 262144;
 
 const DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE;
 
+//500MB in bytes
+const TEST_DATA_ARRAY_SIZE = 500000000
 
 //16MiB in bytes
 const DC_BUFFERED_AMOUNT_MAX_THRESH = 1677216;
@@ -30,10 +32,9 @@ class Connection {
     peerConnection2 = new RTCPeerConnection(peerConnectionConfig);
     socket = io();
     roomId = 'test';
-    unIdentifiedStreams = [];
-    streamId2Content = {};
 
-    onPeerConnectedCallback
+    onPeerConnectedCallback = null;
+    onRemoteStreamCallback = null;
 
     // RTCSenders, so that they can be removed when wanting to close a videostream
     mainSender = null;
@@ -44,15 +45,21 @@ class Connection {
     toReceive = null;
     fileName = null;
 
+    // ICE negotation state variables
     makingOffer = false;
     ignoreOffer = false;
     polite = false;
 
-    constructor(onPeerConnected) {
-        if(onPeerConnected){
-            this.onPeerConnectedCallback = onPeerConnected;
+    constructor(onPeerConnected, onRemoteStream) {
+        if (!onPeerConnected) {
+            throw new Error("Invalid value for onPeerConnected callback passed in Connection constructor")
+        }
+        if (!onRemoteStream) {
+            throw new Error("Invalid value for onRemoteStream callback passed in Connection constructor")
         }
 
+        this.onPeerConnectedCallback = onPeerConnected;
+        this.onRemoteStreamCallback = onRemoteStream;
         //TODO: Could get callbacks in constructor for what to de when connected etc (e.g. enable/disable buttons)
         this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
         this.initializePeerEventHandlers(this.peerConnection2, this.sendSignallingMessage2);
@@ -73,9 +80,11 @@ class Connection {
         this.socket.on('created', (roomId) => {
             this.roomId = roomId;
         });
+
         this.socket.on('join', (roomId) => {
             this.roomId = roomId;
         });
+
         this.socket.on('full', () => {
             console.log('the room was full, close a window');
         });
@@ -104,39 +113,12 @@ class Connection {
             if (pc.connectionState === 'connected') {
                 console.log('RTCPeerConnection is connected');
             }
-            else if(pc.connectionState === 'failed') {
+            else if (pc.connectionState === 'failed') {
                 pc.restartIce();
             }
-            else if(pc.connectionState === 'closed'
-                || pc.connectionState === 'disconnected'){
+            else if (pc.connectionState === 'closed'
+                || pc.connectionState === 'disconnected') {
                 console.log('peer connection closed or disconnected');
-            }
-        };
-
-        pc.ontrack = ({track, streams}) => {
-            const newStream = streams[0];
-            track.onunmute = () => {
-                if(newStream.id in this.streamId2Content) {
-                    console.log("I know this stream");
-                    if (this.streamId2Content[newStream.id] === 'webcam')
-                    {
-                        //TODO: There seems to be some bug here so that the stream is sometimes not 
-                        //presented, even though it is being transmitted
-                        console.log("attaching stream");
-                        this.attachStreamToHtml('remote-camera-container', newStream);
-                    }
-                    else if (this.streamId2Content[newStream.id] === 'screenShare') {
-                        this.attachStreamToHtml('remote-screen-container', newStream);
-                    }
-                    else {
-                        console.log('invalid id mapping for new stream');
-                    }
-                    delete this.streamId2Content[newStream.id];
-                }
-                else {
-                    console.log("unidentified stream");
-                    this.unIdentifiedStreams.push(newStream);
-                }
             }
         };
 
@@ -161,25 +143,19 @@ class Connection {
                     this.makingOffer = false;
                 })
         };
+
+        pc.ontrack = ({track, streams}) => {
+            track.onunmute = () => {
+                this.onRemoteStreamCallback(streams[0]);
+            }
+        };
+
         // When the other peer sends on datachannel
         pc.ondatachannel = event => {
             const channel = event.channel;
             channel.binarytype = 'arraybuffer';
 
-            channel.onmessage = this.handleDataChannelMessageReceived;
-
-            //Reset stuff from previous download
-            this.receivedSize = 0;
-            this.fileName = null;
-            const downloadAnchor = document.querySelector("a#download");
-            if(downloadAnchor.href) {
-                URL.revokeObjectURL(downloadAnchor.href);
-                downloadAnchor.removeAttribute('href');
-            }
-        };
-    }
-
-    handleDataChannelMessageReceived = (event) => {
+            channel.onmessage = (event) => {
                 this.receiveBuffer.push(event.data);
                 //For some reason these differ between chrome and firefox
                 this.receivedSize += event.data.size ? event.data.size : event.data.byteLength;
@@ -201,9 +177,15 @@ class Connection {
                 }
             };
 
-    attachStreamToHtml = (elementId, stream) => {
-        const videoContainer = document.getElementById(elementId);
-        videoContainer.srcObject = stream;    
+            //Reset stuff from previous download
+            this.receivedSize = 0;
+            this.fileName = null;
+            const downloadAnchor = document.querySelector("a#download");
+            if(downloadAnchor.href) {
+                URL.revokeObjectURL(downloadAnchor.href);
+                downloadAnchor.removeAttribute('href');
+            }
+        };
     }
 
     startLocalScreenShare = () => {
@@ -214,7 +196,7 @@ class Connection {
            });
     }
 
-    startLocalCamera = () => {
+    startCamera = () => {
         return navigator.mediaDevices.getUserMedia(mediaConstraints)
             .then(stream => {
                 return this.handleNewStreamStarted(stream);
@@ -224,24 +206,18 @@ class Connection {
     handleNewStreamStarted = (stream) => {
         if(this.mainSender === null) {
             this.mainSender = this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
-            this.sendSignallingMessage({'webcam': stream.id});
             return stream;
         }
         else if(this.extraSender === null) {
             this.extraSender = this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
-            this.sendSignallingMessage2({'screenShare': stream.id})
             return stream;
-        }
-        else {
-            throw "Only two streams can be running at the same time";
         }
     }
 
     closeMainSender = () => {
         if(this.mainSender !== null) {
             this.peerConnection.removeTrack(this.mainSender);
-            this.peerConnection.close();
-            document.getElementById('local-camera-container').srcObject = null;
+            //this.peerConnection.close();
             this.mainSender = null;
         }
     }
@@ -249,22 +225,16 @@ class Connection {
     closeExtraSender = () => {
         if(this.extraSender !== null) {
             this.peerConnection2.removeTrack(this.extraSender);
-            this.peerConnection2.close();
-            document.getElementById('local-screen-container').srcObject = null;
+            //this.peerConnection2.close();
             this.extraSender = null;
         }
     }
 
-    sendFile1 = (file, htmlProgressElementId) => {
-        this.sendFile(file, htmlProgressElementId, this.peerConnection);
+    sendFile = (file, onProgressCallback) => {
+        this.sendData(file, Number.MAX_SAFE_INTEGER, onProgressCallback, this.peerConnection);
     }
-   
-    sendFile2 = (file, htmlProgressElementId) => {
-        this.sendFile(file, htmlProgressElementId, this.peerConnection2);
-    }   
 
-
-    sendFile = (file, htmlProgressElementId, pc) => {
+    sendData = (file, maxLifeTimeMS, onProgressCallback, pc) => {
         //TODO: add exception handler 
         try {
             //First send metadata via the signalling channel
@@ -280,8 +250,15 @@ class Connection {
 
             const chunkSize = DC_CHUNK_SIZE;
             let offset = 0;
+            let transferStartTime = new Date().getTime();
+            let prevProgressUpdate = new Date().getTime();
 
             fileReader.onload = (e) => {
+                if(((new Date()).getTime()-transferStartTime) >= maxLifeTimeMS) {
+                    console.log('Transfer reached lifetime');
+                    sendChannel.close();
+                    return;
+                }
                 try {
                     sendChannel.send(e.target.result);
                 }
@@ -289,26 +266,32 @@ class Connection {
                     console.log(`data channel failed to send: ${err}`);
                 }
 
-
                 offset += e.target.result.byteLength;
                 // To make sure we don't overload the SCTP buffer we also check the bufferedAmount
                 if (offset < file.size && sendChannel.bufferedAmount < DC_BUFFERED_AMOUNT_MAX_THRESH) {
+                    if (sendChannel.bufferedAmount == 0) console.log(`bufferedAmount: ${sendChannel.bufferedAmount}`)
                     readSlice(offset);
                 }
 
-                const sendProgressMeter = document.getElementById(htmlProgressElementId);
-                sendProgressMeter.textContent = `${offset}/${file.size}`;
+                maybeUpdateProgress();
             };
+
+            const maybeUpdateProgress = () => {
+                // TODO: this function might be reduntant
+                if ((new Date()).getTime()-prevProgressUpdate >= 1000) {
+                    onProgressCallback(sendChannel.id, offset);
+                    prevProgressUpdate = new Date().getTime();
+                }
+            }
 
             const readSlice = o => {
                 const slice = file.slice(offset, o + chunkSize);
                 fileReader.readAsArrayBuffer(slice);
             }
 
-
             sendChannel.onopen = event => {
                 console.log("sending a file on data channel!");
-                // To start the file reading process
+                // Starts the file reading process
                 readSlice(0);
             }
 
@@ -344,9 +327,8 @@ class Connection {
         this.socket.emit('message2', message, this.roomId);
     }
 
-    handleSignallingMessage = (pc, {description, candidate, webcam, screenShare, metadata, ready}, sendMessageFunc) => {
+    handleSignallingMessage = (pc, {description, candidate, metadata, ready}, sendMessageFunc) => {
         if (description || candidate) {
-
             try {
                 if (description) {
                     const offerCollision = (description.type == 'offer') && 
@@ -379,28 +361,6 @@ class Connection {
                 console.error(err);
             }
         }
-        else if (webcam) {
-            if(webcam in this.streamId2Content && this.unIdentifiedStreams.map(ms => ms.id).includes.webcam) {
-                const remoteCameraStream = this.unIdentifiedStreams.find(ms => ms.id ===webcam);
-
-                this.unIdentifiedStreams = this.unIdentifiedStreams.filter(ms => ms.id !==webcam);
-                this.attachStreamToHtml('remote-camera-container', remoteCameraStream);
-            }
-            else {
-                this.streamId2Content[webcam] = 'webcam';
-            }
-        }
-        else if (screenShare) {
-            if(screenShare in this.streamId2Content && this.unIdentifiedStreams.map(ms => ms.id).includes(screenShare)) {
-                const remoteScreenStream = this.unIdentifiedStreams.find(ms => ms.id === screenShare);
-
-                this.unIdentifiedStreams = this.unIdentifiedStreams.filter(ms => ms.id !== screenShare);
-                this.attachStreamToHtml('remote-screen-container', remoteScreenStream);
-            }
-            else {
-                this.streamId2Content[screenShare] = 'screenShare';
-            }
-        }
         else if (metadata) {
             console.log("message received with metadata", metadata.name);
             this.toReceive = metadata.size;
@@ -414,34 +374,13 @@ class Connection {
             console.log("OTHER PEER PRESENT");
         }
     }
+
+    runDataChannelTest = (testDurationMs, onProgressFunc) => {
+        //TODO: might create new PeerConnection for each new test        
+        const buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE); 
+        this.sendData(new File([buffer], 'testTransfer.txt'), testDurationMs, onProgressFunc, this.peerConnection)
+    }
 }
 
-function sendData(connectionObj, file, htmlProgressElementId) {
-    connectionObj.sendFile1(file, htmlProgressElementId);
-}
+export default Connection;
 
-function sendDataExtra(connectionObj, file, htmlProgressElementId) {
-    connectionObj.sendFile2(file, htmlProgressElementId);
-}
-
-function createSocketConnectionInstance(onPeerConnected) {
-    return new Connection(onPeerConnected);
-}
-
-function startCamera(connectionObj) {
-    return connectionObj.startLocalCamera();
-}
-
-function startScreenShare(connectionObj) {
-    return connectionObj.startLocalScreenShare();
-}
-
-function closeTopSender(connectionObj) {
-    connectionObj.closeMainSender();
-}
-
-function closeBottomSender(connectionObj) {
-    connectionObj.closeExtraSender();
-}
-
-export { closeTopSender, closeBottomSender, createSocketConnectionInstance, startScreenShare, sendData, startCamera, sendDataExtra }
