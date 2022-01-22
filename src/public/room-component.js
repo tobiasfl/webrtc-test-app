@@ -6,6 +6,7 @@ const INFINITY_TIMEOUT = 2147483647;
                             
 const RoomComponent = (props) => {
     let socketInstance = useRef(null);
+    let socketInstance2 = useRef(null);
 
     const [chosenFile, setChosenFile] = useState(null);
     const [fileTransferProgress, setFileTransferProgress] = useState(0);
@@ -15,25 +16,31 @@ const RoomComponent = (props) => {
     const urlParams = new URLSearchParams(window.location.search);
 
     useEffect(() => {
-        socketInstance.current = new Connection(setTestTimeouts, handleRemoteStream);
+        socketInstance.current = new Connection('pc1', setTestTimeouts, handleRemoteStream);
+        socketInstance2.current = new Connection('pc2', setTestTimeouts2, handleRemoteStream);
     }, []);
+
+
 
     const setTestTimeouts = () => {
         const rtp1Start = getIntUrlParam('rtp1start') ? getIntUrlParam('rtp1start') : INFINITY_TIMEOUT;
         const rtp1End = getIntUrlParam('rtp1end') ? getIntUrlParam('rtp1end') : INFINITY_TIMEOUT;
-        const rtp2Start = getIntUrlParam('rtp2start') ? getIntUrlParam('rtp2start') : INFINITY_TIMEOUT;
-        const rtp2End = getIntUrlParam('rtp2end') ? getIntUrlParam('rtp2end') : INFINITY_TIMEOUT;
         const sctp1Start = getIntUrlParam('sctp1start') ? getIntUrlParam('sctp1start') : INFINITY_TIMEOUT;
         const sctp1End = getIntUrlParam('sctp1end') ? getIntUrlParam('sctp1end') : INFINITY_TIMEOUT;
 
         setTimeout(startMainVideo, rtp1Start);
         setTimeout(closeMainVideo, rtp1End);
-        setTimeout(startExtraVideoStream, rtp2Start);
-        setTimeout(closeExtraVideo, rtp2End);
         setTimeout(() => startTestDataTransfer(sctp1End-sctp1Start), sctp1Start);
     }
 
-    const urlFlagPresent = (parameter) => urlParams.has(parameter);
+    const setTestTimeouts2 = () => {
+        const rtp2Start = getIntUrlParam('rtp2start') ? getIntUrlParam('rtp2start') : INFINITY_TIMEOUT;
+        const rtp2End = getIntUrlParam('rtp2end') ? getIntUrlParam('rtp2end') : INFINITY_TIMEOUT;
+
+        setTimeout(startExtraVideoStream, rtp2Start);
+        setTimeout(closeExtraVideo, rtp2End);
+    }
+
     const getIntUrlParam = (parameter) => {
         const paramVal = urlParams.get(parameter);
         return paramVal ? parseInt(paramVal) : null;
@@ -66,12 +73,12 @@ const RoomComponent = (props) => {
     }
 
     const closeMainVideo = () => {
-        socketInstance.current.closeMainSender();
+        socketInstance.current.closeMediaSender();
         document.getElementById('local-media-container').srcObject = null;
     }
 
     const startExtraVideoStream = () => {
-        socketInstance.current.startCamera()
+        socketInstance2.current.startCamera()
             .then(stream => {
                 document.getElementById("local-media-container2").srcObject = stream;
             })
@@ -81,7 +88,7 @@ const RoomComponent = (props) => {
     }
 
     const closeExtraVideo = () => {
-        socketInstance.current.closeExtraSender();
+        socketInstance2.current.closeExtraSender();
         document.getElementById('local-media-container2').srcObject = null;
     }
 
@@ -143,7 +150,7 @@ const RoomComponent = (props) => {
                         <td>
                             <div>
                                 <video id="local-media-container2" autoPlay width="640" height="480"></video>
-                                <div>Local media#1</div>
+                                <div>Local media#2</div>
                                 <button onClick={() => enableScreenShare(socketInstance.current)}>Start screen share</button>
                                 <button onClick={startExtraVideoStream}>Start extra camera stream</button>
                                 <button onClick={closeExtraVideo}>Close</button>

@@ -29,16 +29,14 @@ const DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_S
 
 class Connection {
     peerConnection = new RTCPeerConnection(peerConnectionConfig);
-    peerConnection2 = new RTCPeerConnection(peerConnectionConfig);
     socket = io();
-    roomId = 'test';
+    roomId = null;
 
     onPeerConnectedCallback = null;
     onRemoteStreamCallback = null;
 
-    // RTCSenders, so that they can be removed when wanting to close a videostream
-    mainSender = null;
-    extraSender = null; 
+    // RTCSender, so it can be removed when wanting to close a videostream
+    mediaSender = null;
 
     receiveBuffer = [];
     receivedSize = 0;
@@ -50,19 +48,11 @@ class Connection {
     ignoreOffer = false;
     polite = false;
 
-    constructor(onPeerConnected, onRemoteStream) {
-        if (!onPeerConnected) {
-            throw new Error("Invalid value for onPeerConnected callback passed in Connection constructor")
-        }
-        if (!onRemoteStream) {
-            throw new Error("Invalid value for onRemoteStream callback passed in Connection constructor")
-        }
-
+    constructor(connectionId, onPeerConnected, onRemoteStream) {
+        this.roomId = connectionId;
         this.onPeerConnectedCallback = onPeerConnected;
         this.onRemoteStreamCallback = onRemoteStream;
-        //TODO: Could get callbacks in constructor for what to de when connected etc (e.g. enable/disable buttons)
-        this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
-        this.initializePeerEventHandlers(this.peerConnection2, this.sendSignallingMessage2);
+        this.initializePeerEventHandlers(this.peerConnection);
         this.initializeSocketEvents();
     }
 
@@ -90,12 +80,8 @@ class Connection {
         });
 
         this.socket.on('message', message => {
-            this.handleSignallingMessage(this.peerConnection, message, this.sendSignallingMessage);
+            this.handleSignallingMessage(this.peerConnection, message);
         });
-
-        this.socket.on('message2', message => {
-            this.handleSignallingMessage(this.peerConnection2, message, this.sendSignallingMessage2);
-        })
 
         this.socket.on('joined', (roomId) => {
             this.polite = true;
@@ -106,8 +92,8 @@ class Connection {
         });
     }
 
-    initializePeerEventHandlers = (pc, sendMessageFunc) => {
-        pc.onicecandidate = ({candidate}) => sendMessageFunc({candidate});
+    initializePeerEventHandlers = (pc) => {
+        pc.onicecandidate = ({candidate}) => this.sendSignallingMessage({candidate});
 
         pc.onconnectionstatechange = () => {
             if (pc.connectionState === 'connected') {
@@ -134,7 +120,7 @@ class Connection {
             this.makingOffer = true;
             pc.setLocalDescription()
                 .then(() => {
-                    sendMessageFunc({description: pc.localDescription});
+                    this.sendSignallingMessage({description: pc.localDescription});
                 })
                 .catch(err => {
                     console.log(`signalling offer failed: ${err}`);
@@ -146,7 +132,9 @@ class Connection {
 
         pc.ontrack = ({track, streams}) => {
             track.onunmute = () => {
-                this.onRemoteStreamCallback(streams[0]);
+                if (this.onRemoteStreamCallback) {
+                    this.onRemoteStreamCallback(streams[0]);
+                }
             }
         };
 
@@ -204,29 +192,16 @@ class Connection {
     }
 
     handleNewStreamStarted = (stream) => {
-        if(this.mainSender === null) {
-            this.mainSender = this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
-            return stream;
-        }
-        else if(this.extraSender === null) {
-            this.extraSender = this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
+        if(this.mediaSender === null) {
+            this.mediaSender = this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
             return stream;
         }
     }
 
-    closeMainSender = () => {
-        if(this.mainSender !== null) {
-            this.peerConnection.removeTrack(this.mainSender);
-            //this.peerConnection.close();
-            this.mainSender = null;
-        }
-    }
-
-    closeExtraSender = () => {
-        if(this.extraSender !== null) {
-            this.peerConnection2.removeTrack(this.extraSender);
-            //this.peerConnection2.close();
-            this.extraSender = null;
+    closeMediaSender = () => {
+        if(this.mediaSender !== null) {
+            this.peerConnection.removeTrack(this.mediaSender);
+            this.mediaSender = null;
         }
     }
 
@@ -323,11 +298,7 @@ class Connection {
         this.socket.emit('message', message, this.roomId);
     }
 
-    sendSignallingMessage2 = (message) => {
-        this.socket.emit('message2', message, this.roomId);
-    }
-
-    handleSignallingMessage = (pc, {description, candidate, metadata, ready}, sendMessageFunc) => {
+    handleSignallingMessage = (pc, {description, candidate, metadata, ready}) => {
         if (description || candidate) {
             try {
                 if (description) {
@@ -345,7 +316,7 @@ class Connection {
                             if (description.type == 'offer') {
                                 pc.setLocalDescription()
                                     .then(() => {
-                                        sendMessageFunc({description: pc.localDescription});
+                                        this.sendSignallingMessage({description: pc.localDescription});
                                     });
                         }
                     });
@@ -376,7 +347,6 @@ class Connection {
     }
 
     runDataChannelTest = (testDurationMs, onProgressFunc) => {
-        //TODO: might create new PeerConnection for each new test        
         const buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE); 
         this.sendData(new File([buffer], 'testTransfer.txt'), testDurationMs, onProgressFunc, this.peerConnection)
     }

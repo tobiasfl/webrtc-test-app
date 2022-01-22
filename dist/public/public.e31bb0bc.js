@@ -39588,28 +39588,24 @@ var TEST_DATA_ARRAY_SIZE = 500000000; //16MiB in bytes
 var DC_BUFFERED_AMOUNT_MAX_THRESH = 1677216;
 var DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_SIZE;
 
-var Connection = // RTCSenders, so that they can be removed when wanting to close a videostream
+var Connection = // RTCSender, so it can be removed when wanting to close a videostream
 // ICE negotation state variables
-function Connection(onPeerConnected, onRemoteStream) {
+function Connection(connectionId, onPeerConnected, onRemoteStream) {
   var _this = this;
 
   _classCallCheck(this, Connection);
 
   _defineProperty(this, "peerConnection", new RTCPeerConnection(peerConnectionConfig));
 
-  _defineProperty(this, "peerConnection2", new RTCPeerConnection(peerConnectionConfig));
-
   _defineProperty(this, "socket", io());
 
-  _defineProperty(this, "roomId", 'test');
+  _defineProperty(this, "roomId", null);
 
   _defineProperty(this, "onPeerConnectedCallback", null);
 
   _defineProperty(this, "onRemoteStreamCallback", null);
 
-  _defineProperty(this, "mainSender", null);
-
-  _defineProperty(this, "extraSender", null);
+  _defineProperty(this, "mediaSender", null);
 
   _defineProperty(this, "receiveBuffer", []);
 
@@ -39647,11 +39643,7 @@ function Connection(onPeerConnected, onRemoteStream) {
     });
 
     _this.socket.on('message', function (message) {
-      _this.handleSignallingMessage(_this.peerConnection, message, _this.sendSignallingMessage);
-    });
-
-    _this.socket.on('message2', function (message) {
-      _this.handleSignallingMessage(_this.peerConnection2, message, _this.sendSignallingMessage2);
+      _this.handleSignallingMessage(_this.peerConnection, message);
     });
 
     _this.socket.on('joined', function (roomId) {
@@ -39667,10 +39659,10 @@ function Connection(onPeerConnected, onRemoteStream) {
     });
   });
 
-  _defineProperty(this, "initializePeerEventHandlers", function (pc, sendMessageFunc) {
+  _defineProperty(this, "initializePeerEventHandlers", function (pc) {
     pc.onicecandidate = function (_ref) {
       var candidate = _ref.candidate;
-      return sendMessageFunc({
+      return _this.sendSignallingMessage({
         candidate: candidate
       });
     };
@@ -39696,7 +39688,7 @@ function Connection(onPeerConnected, onRemoteStream) {
     pc.onnegotiationneeded = function () {
       _this.makingOffer = true;
       pc.setLocalDescription().then(function () {
-        sendMessageFunc({
+        _this.sendSignallingMessage({
           description: pc.localDescription
         });
       }).catch(function (err) {
@@ -39711,7 +39703,9 @@ function Connection(onPeerConnected, onRemoteStream) {
           streams = _ref2.streams;
 
       track.onunmute = function () {
-        _this.onRemoteStreamCallback(streams[0]);
+        if (_this.onRemoteStreamCallback) {
+          _this.onRemoteStreamCallback(streams[0]);
+        }
       };
     }; // When the other peer sends on datachannel
 
@@ -39769,30 +39763,17 @@ function Connection(onPeerConnected, onRemoteStream) {
   });
 
   _defineProperty(this, "handleNewStreamStarted", function (stream) {
-    if (_this.mainSender === null) {
-      _this.mainSender = _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
-      return stream;
-    } else if (_this.extraSender === null) {
-      _this.extraSender = _this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
+    if (_this.mediaSender === null) {
+      _this.mediaSender = _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
       return stream;
     }
   });
 
-  _defineProperty(this, "closeMainSender", function () {
-    if (_this.mainSender !== null) {
-      _this.peerConnection.removeTrack(_this.mainSender); //this.peerConnection.close();
+  _defineProperty(this, "closeMediaSender", function () {
+    if (_this.mediaSender !== null) {
+      _this.peerConnection.removeTrack(_this.mediaSender);
 
-
-      _this.mainSender = null;
-    }
-  });
-
-  _defineProperty(this, "closeExtraSender", function () {
-    if (_this.extraSender !== null) {
-      _this.peerConnection2.removeTrack(_this.extraSender); //this.peerConnection2.close();
-
-
-      _this.extraSender = null;
+      _this.mediaSender = null;
     }
   });
 
@@ -39897,11 +39878,7 @@ function Connection(onPeerConnected, onRemoteStream) {
     _this.socket.emit('message', message, _this.roomId);
   });
 
-  _defineProperty(this, "sendSignallingMessage2", function (message) {
-    _this.socket.emit('message2', message, _this.roomId);
-  });
-
-  _defineProperty(this, "handleSignallingMessage", function (pc, _ref3, sendMessageFunc) {
+  _defineProperty(this, "handleSignallingMessage", function (pc, _ref3) {
     var description = _ref3.description,
         candidate = _ref3.candidate,
         metadata = _ref3.metadata,
@@ -39921,7 +39898,7 @@ function Connection(onPeerConnected, onRemoteStream) {
           pc.setRemoteDescription(description).then(function () {
             if (description.type == 'offer') {
               pc.setLocalDescription().then(function () {
-                sendMessageFunc({
+                _this.sendSignallingMessage({
                   description: pc.localDescription
                 });
               });
@@ -39951,25 +39928,15 @@ function Connection(onPeerConnected, onRemoteStream) {
   });
 
   _defineProperty(this, "runDataChannelTest", function (testDurationMs, onProgressFunc) {
-    //TODO: might create new PeerConnection for each new test        
     var buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE);
 
     _this.sendData(new File([buffer], 'testTransfer.txt'), testDurationMs, onProgressFunc, _this.peerConnection);
   });
 
-  if (!onPeerConnected) {
-    throw new Error("Invalid value for onPeerConnected callback passed in Connection constructor");
-  }
-
-  if (!onRemoteStream) {
-    throw new Error("Invalid value for onRemoteStream callback passed in Connection constructor");
-  }
-
+  this.roomId = connectionId;
   this.onPeerConnectedCallback = onPeerConnected;
-  this.onRemoteStreamCallback = onRemoteStream; //TODO: Could get callbacks in constructor for what to de when connected etc (e.g. enable/disable buttons)
-
-  this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
-  this.initializePeerEventHandlers(this.peerConnection2, this.sendSignallingMessage2);
+  this.onRemoteStreamCallback = onRemoteStream;
+  this.initializePeerEventHandlers(this.peerConnection);
   this.initializeSocketEvents();
 } // Signaling server interaction 
 // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
@@ -40018,6 +39985,7 @@ var INFINITY_TIMEOUT = 2147483647;
 
 var RoomComponent = function RoomComponent(props) {
   var socketInstance = (0, _react.useRef)(null);
+  var socketInstance2 = (0, _react.useRef)(null);
 
   var _useState = (0, _react.useState)(null),
       _useState2 = _slicedToArray(_useState, 2),
@@ -40041,27 +40009,27 @@ var RoomComponent = function RoomComponent(props) {
 
   var urlParams = new URLSearchParams(window.location.search);
   (0, _react.useEffect)(function () {
-    socketInstance.current = new _connection.default(setTestTimeouts, handleRemoteStream);
+    socketInstance.current = new _connection.default('pc1', setTestTimeouts, handleRemoteStream);
+    socketInstance2.current = new _connection.default('pc2', setTestTimeouts2, handleRemoteStream);
   }, []);
 
   var setTestTimeouts = function setTestTimeouts() {
     var rtp1Start = getIntUrlParam('rtp1start') ? getIntUrlParam('rtp1start') : INFINITY_TIMEOUT;
     var rtp1End = getIntUrlParam('rtp1end') ? getIntUrlParam('rtp1end') : INFINITY_TIMEOUT;
-    var rtp2Start = getIntUrlParam('rtp2start') ? getIntUrlParam('rtp2start') : INFINITY_TIMEOUT;
-    var rtp2End = getIntUrlParam('rtp2end') ? getIntUrlParam('rtp2end') : INFINITY_TIMEOUT;
     var sctp1Start = getIntUrlParam('sctp1start') ? getIntUrlParam('sctp1start') : INFINITY_TIMEOUT;
     var sctp1End = getIntUrlParam('sctp1end') ? getIntUrlParam('sctp1end') : INFINITY_TIMEOUT;
     setTimeout(startMainVideo, rtp1Start);
     setTimeout(closeMainVideo, rtp1End);
-    setTimeout(startExtraVideoStream, rtp2Start);
-    setTimeout(closeExtraVideo, rtp2End);
     setTimeout(function () {
       return startTestDataTransfer(sctp1End - sctp1Start);
     }, sctp1Start);
   };
 
-  var urlFlagPresent = function urlFlagPresent(parameter) {
-    return urlParams.has(parameter);
+  var setTestTimeouts2 = function setTestTimeouts2() {
+    var rtp2Start = getIntUrlParam('rtp2start') ? getIntUrlParam('rtp2start') : INFINITY_TIMEOUT;
+    var rtp2End = getIntUrlParam('rtp2end') ? getIntUrlParam('rtp2end') : INFINITY_TIMEOUT;
+    setTimeout(startExtraVideoStream, rtp2Start);
+    setTimeout(closeExtraVideo, rtp2End);
   };
 
   var getIntUrlParam = function getIntUrlParam(parameter) {
@@ -40094,12 +40062,12 @@ var RoomComponent = function RoomComponent(props) {
   };
 
   var closeMainVideo = function closeMainVideo() {
-    socketInstance.current.closeMainSender();
+    socketInstance.current.closeMediaSender();
     document.getElementById('local-media-container').srcObject = null;
   };
 
   var startExtraVideoStream = function startExtraVideoStream() {
-    socketInstance.current.startCamera().then(function (stream) {
+    socketInstance2.current.startCamera().then(function (stream) {
       document.getElementById("local-media-container2").srcObject = stream;
     }).catch(function (err) {
       console.log("Starting extra local video failed: ".concat(err));
@@ -40107,7 +40075,7 @@ var RoomComponent = function RoomComponent(props) {
   };
 
   var closeExtraVideo = function closeExtraVideo() {
-    socketInstance.current.closeExtraSender();
+    socketInstance2.current.closeExtraSender();
     document.getElementById('local-media-container2').srcObject = null;
   };
 
@@ -40162,7 +40130,7 @@ var RoomComponent = function RoomComponent(props) {
     autoPlay: true,
     width: "640",
     height: "480"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Local media#1"), /*#__PURE__*/_react.default.createElement("button", {
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Local media#2"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: function onClick() {
       return enableScreenShare(socketInstance.current);
     }
