@@ -31941,7 +31941,9 @@ function shimCreateOfferLegacy(window) {
           }
         }
       } else if (offerOptions.offerToReceiveAudio === true && !audioTransceiver) {
-        this.addTransceiver('audio');
+        this.addTransceiver('audio', {
+          direction: 'recvonly'
+        });
       }
 
       if (typeof offerOptions.offerToReceiveVideo !== 'undefined') {
@@ -31968,7 +31970,9 @@ function shimCreateOfferLegacy(window) {
           }
         }
       } else if (offerOptions.offerToReceiveVideo === true && !videoTransceiver) {
-        this.addTransceiver('video');
+        this.addTransceiver('video', {
+          direction: 'recvonly'
+        });
       }
     }
 
@@ -33920,7 +33924,7 @@ const encodeBlobAsBase64 = (data, callback) => {
 
 var _default = encodePacket;
 exports.default = _default;
-},{"./commons.js":"../../node_modules/engine.io-parser/build/esm/commons.js"}],"../../node_modules/base64-arraybuffer/dist/base64-arraybuffer.es5.js":[function(require,module,exports) {
+},{"./commons.js":"../../node_modules/engine.io-parser/build/esm/commons.js"}],"../../node_modules/@socket.io/base64-arraybuffer/dist/base64-arraybuffer.es5.js":[function(require,module,exports) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -33930,7 +33934,7 @@ exports.encode = exports.decode = void 0;
 
 /*
  * base64-arraybuffer 1.0.1 <https://github.com/niklasvh/base64-arraybuffer>
- * Copyright (c) 2021 Niklas von Hertzen <https://hertzen.com>
+ * Copyright (c) 2022 Niklas von Hertzen <https://hertzen.com>
  * Released under MIT License
  */
 var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; // Use a lookup table to find the index.
@@ -34010,7 +34014,7 @@ exports.default = void 0;
 
 var _commons = require("./commons.js");
 
-var _base64Arraybuffer = require("base64-arraybuffer");
+var _base64Arraybuffer = require("@socket.io/base64-arraybuffer");
 
 const withNativeArrayBuffer = typeof ArrayBuffer === "function";
 
@@ -34071,7 +34075,7 @@ const mapBinary = (data, binaryType) => {
 
 var _default = decodePacket;
 exports.default = _default;
-},{"./commons.js":"../../node_modules/engine.io-parser/build/esm/commons.js","base64-arraybuffer":"../../node_modules/base64-arraybuffer/dist/base64-arraybuffer.es5.js"}],"../../node_modules/engine.io-parser/build/esm/index.js":[function(require,module,exports) {
+},{"./commons.js":"../../node_modules/engine.io-parser/build/esm/commons.js","@socket.io/base64-arraybuffer":"../../node_modules/@socket.io/base64-arraybuffer/dist/base64-arraybuffer.es5.js"}],"../../node_modules/engine.io-parser/build/esm/index.js":[function(require,module,exports) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -39550,13 +39554,7 @@ Object.assign(lookup, {
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.closeTopSender = closeTopSender;
-exports.closeBottomSender = closeBottomSender;
-exports.createSocketConnectionInstance = createSocketConnectionInstance;
-exports.startScreenShare = startScreenShare;
-exports.sendData = sendData;
-exports.startCamera = startCamera;
-exports.sendDataExtra = sendDataExtra;
+exports.default = void 0;
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
@@ -39583,13 +39581,16 @@ var mediaConstraints = {
 
 var DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
 var DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE = 262144;
-var DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE; //16MiB in bytes
+var DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE; //500MB in bytes
+
+var TEST_DATA_ARRAY_SIZE = 500000000; //16MiB in bytes
 
 var DC_BUFFERED_AMOUNT_MAX_THRESH = 1677216;
 var DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_SIZE;
 
 var Connection = // RTCSenders, so that they can be removed when wanting to close a videostream
-function Connection(onPeerConnected) {
+// ICE negotation state variables
+function Connection(onPeerConnected, onRemoteStream) {
   var _this = this;
 
   _classCallCheck(this, Connection);
@@ -39602,11 +39603,9 @@ function Connection(onPeerConnected) {
 
   _defineProperty(this, "roomId", 'test');
 
-  _defineProperty(this, "unIdentifiedStreams", []);
+  _defineProperty(this, "onPeerConnectedCallback", null);
 
-  _defineProperty(this, "streamId2Content", {});
-
-  _defineProperty(this, "onPeerConnectedCallback", void 0);
+  _defineProperty(this, "onRemoteStreamCallback", null);
 
   _defineProperty(this, "mainSender", null);
 
@@ -39686,36 +39685,6 @@ function Connection(onPeerConnected) {
       }
     };
 
-    pc.ontrack = function (_ref2) {
-      var track = _ref2.track,
-          streams = _ref2.streams;
-      var newStream = streams[0];
-
-      track.onunmute = function () {
-        if (newStream.id in _this.streamId2Content) {
-          console.log("I know this stream");
-
-          if (_this.streamId2Content[newStream.id] === 'webcam') {
-            //TODO: There seems to be some bug here so that the stream is sometimes not 
-            //presented, even though it is being transmitted
-            console.log("attaching stream");
-
-            _this.attachStreamToHtml('remote-camera-container', newStream);
-          } else if (_this.streamId2Content[newStream.id] === 'screenShare') {
-            _this.attachStreamToHtml('remote-screen-container', newStream);
-          } else {
-            console.log('invalid id mapping for new stream');
-          }
-
-          delete _this.streamId2Content[newStream.id];
-        } else {
-          console.log("unidentified stream");
-
-          _this.unIdentifiedStreams.push(newStream);
-        }
-      };
-    };
-
     pc.onicegatheringstatechange = function (event) {
       console.log("change in ice gathering state: ".concat(event.target.iceGatheringState));
     };
@@ -39735,13 +39704,45 @@ function Connection(onPeerConnected) {
       }).finally(function () {
         _this.makingOffer = false;
       });
+    };
+
+    pc.ontrack = function (_ref2) {
+      var track = _ref2.track,
+          streams = _ref2.streams;
+
+      track.onunmute = function () {
+        _this.onRemoteStreamCallback(streams[0]);
+      };
     }; // When the other peer sends on datachannel
 
 
     pc.ondatachannel = function (event) {
       var channel = event.channel;
       channel.binarytype = 'arraybuffer';
-      channel.onmessage = _this.handleDataChannelMessageReceived; //Reset stuff from previous download
+
+      channel.onmessage = function (event) {
+        _this.receiveBuffer.push(event.data); //For some reason these differ between chrome and firefox
+
+
+        _this.receivedSize += event.data.size ? event.data.size : event.data.byteLength; //update html
+
+        var sendProgressMeter = document.getElementById('receive-progress');
+        sendProgressMeter.textContent = "".concat(_this.receivedSize, "/").concat(_this.toReceive);
+
+        if (_this.toReceive !== null && _this.receivedSize === _this.toReceive) {
+          console.log("received the whole file now");
+          var received = new Blob(_this.receiveBuffer);
+          _this.receiveBuffer = [];
+
+          var _downloadAnchor = document.querySelector("a#download");
+
+          _downloadAnchor.href = URL.createObjectURL(received);
+          _downloadAnchor.download = _this.filename;
+          _downloadAnchor.textContent = "Click to download the file";
+          _downloadAnchor.style.dissplay = 'block';
+        }
+      }; //Reset stuff from previous download
+
 
       _this.receivedSize = 0;
       _this.fileName = null;
@@ -39754,32 +39755,6 @@ function Connection(onPeerConnected) {
     };
   });
 
-  _defineProperty(this, "handleDataChannelMessageReceived", function (event) {
-    _this.receiveBuffer.push(event.data); //For some reason these differ between chrome and firefox
-
-
-    _this.receivedSize += event.data.size ? event.data.size : event.data.byteLength; //update html
-
-    var sendProgressMeter = document.getElementById('receive-progress');
-    sendProgressMeter.textContent = "".concat(_this.receivedSize, "/").concat(_this.toReceive);
-
-    if (_this.toReceive !== null && _this.receivedSize === _this.toReceive) {
-      console.log("received the whole file now");
-      var received = new Blob(_this.receiveBuffer);
-      _this.receiveBuffer = [];
-      var downloadAnchor = document.querySelector("a#download");
-      downloadAnchor.href = URL.createObjectURL(received);
-      downloadAnchor.download = _this.filename;
-      downloadAnchor.textContent = "Click to download the file";
-      downloadAnchor.style.dissplay = 'block';
-    }
-  });
-
-  _defineProperty(this, "attachStreamToHtml", function (elementId, stream) {
-    var videoContainer = document.getElementById(elementId);
-    videoContainer.srcObject = stream;
-  });
-
   _defineProperty(this, "startLocalScreenShare", function () {
     //TODO: firefox struggles with this
     return navigator.mediaDevices.getDisplayMedia(mediaConstraints).then(function (stream) {
@@ -39787,7 +39762,7 @@ function Connection(onPeerConnected) {
     });
   });
 
-  _defineProperty(this, "startLocalCamera", function () {
+  _defineProperty(this, "startCamera", function () {
     return navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
       return _this.handleNewStreamStarted(stream);
     });
@@ -39796,56 +39771,36 @@ function Connection(onPeerConnected) {
   _defineProperty(this, "handleNewStreamStarted", function (stream) {
     if (_this.mainSender === null) {
       _this.mainSender = _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
-
-      _this.sendSignallingMessage({
-        'webcam': stream.id
-      });
-
       return stream;
     } else if (_this.extraSender === null) {
       _this.extraSender = _this.peerConnection2.addTrack(stream.getVideoTracks()[0], stream);
-
-      _this.sendSignallingMessage2({
-        'screenShare': stream.id
-      });
-
       return stream;
-    } else {
-      throw "Only two streams can be running at the same time";
     }
   });
 
   _defineProperty(this, "closeMainSender", function () {
     if (_this.mainSender !== null) {
-      _this.peerConnection.removeTrack(_this.mainSender);
+      _this.peerConnection.removeTrack(_this.mainSender); //this.peerConnection.close();
 
-      _this.peerConnection.close();
 
-      document.getElementById('local-camera-container').srcObject = null;
       _this.mainSender = null;
     }
   });
 
   _defineProperty(this, "closeExtraSender", function () {
     if (_this.extraSender !== null) {
-      _this.peerConnection2.removeTrack(_this.extraSender);
+      _this.peerConnection2.removeTrack(_this.extraSender); //this.peerConnection2.close();
 
-      _this.peerConnection2.close();
 
-      document.getElementById('local-screen-container').srcObject = null;
       _this.extraSender = null;
     }
   });
 
-  _defineProperty(this, "sendFile1", function (file, htmlProgressElementId) {
-    _this.sendFile(file, htmlProgressElementId, _this.peerConnection);
+  _defineProperty(this, "sendFile", function (file, onProgressCallback) {
+    _this.sendData(file, Number.MAX_SAFE_INTEGER, onProgressCallback, _this.peerConnection);
   });
 
-  _defineProperty(this, "sendFile2", function (file, htmlProgressElementId) {
-    _this.sendFile(file, htmlProgressElementId, _this.peerConnection2);
-  });
-
-  _defineProperty(this, "sendFile", function (file, htmlProgressElementId, pc) {
+  _defineProperty(this, "sendData", function (file, maxLifeTimeMS, onProgressCallback, pc) {
     //TODO: add exception handler 
     try {
       //First send metadata via the signalling channel
@@ -39870,8 +39825,16 @@ function Connection(onPeerConnected) {
 
       var chunkSize = DC_CHUNK_SIZE;
       var offset = 0;
+      var transferStartTime = new Date().getTime();
+      var prevProgressUpdate = new Date().getTime();
 
       fileReader.onload = function (e) {
+        if (new Date().getTime() - transferStartTime >= maxLifeTimeMS) {
+          console.log('Transfer reached lifetime');
+          sendChannel.close();
+          return;
+        }
+
         try {
           sendChannel.send(e.target.result);
         } catch (err) {
@@ -39881,11 +39844,19 @@ function Connection(onPeerConnected) {
         offset += e.target.result.byteLength; // To make sure we don't overload the SCTP buffer we also check the bufferedAmount
 
         if (offset < file.size && sendChannel.bufferedAmount < DC_BUFFERED_AMOUNT_MAX_THRESH) {
+          if (sendChannel.bufferedAmount == 0) console.log("bufferedAmount: ".concat(sendChannel.bufferedAmount));
           readSlice(offset);
         }
 
-        var sendProgressMeter = document.getElementById(htmlProgressElementId);
-        sendProgressMeter.textContent = "".concat(offset, "/").concat(file.size);
+        maybeUpdateProgress();
+      };
+
+      var maybeUpdateProgress = function maybeUpdateProgress() {
+        // TODO: this function might be reduntant
+        if (new Date().getTime() - prevProgressUpdate >= 1000) {
+          onProgressCallback(sendChannel.id, offset);
+          prevProgressUpdate = new Date().getTime();
+        }
       };
 
       var readSlice = function readSlice(o) {
@@ -39894,7 +39865,7 @@ function Connection(onPeerConnected) {
       };
 
       sendChannel.onopen = function (event) {
-        console.log("sending a file on data channel!"); // To start the file reading process
+        console.log("sending a file on data channel!"); // Starts the file reading process
 
         readSlice(0);
       };
@@ -39933,8 +39904,6 @@ function Connection(onPeerConnected) {
   _defineProperty(this, "handleSignallingMessage", function (pc, _ref3, sendMessageFunc) {
     var description = _ref3.description,
         candidate = _ref3.candidate,
-        webcam = _ref3.webcam,
-        screenShare = _ref3.screenShare,
         metadata = _ref3.metadata,
         ready = _ref3.ready;
 
@@ -39968,38 +39937,6 @@ function Connection(onPeerConnected) {
       } catch (err) {
         console.error(err);
       }
-    } else if (webcam) {
-      if (webcam in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
-        return ms.id;
-      }).includes.webcam) {
-        var remoteCameraStream = _this.unIdentifiedStreams.find(function (ms) {
-          return ms.id === webcam;
-        });
-
-        _this.unIdentifiedStreams = _this.unIdentifiedStreams.filter(function (ms) {
-          return ms.id !== webcam;
-        });
-
-        _this.attachStreamToHtml('remote-camera-container', remoteCameraStream);
-      } else {
-        _this.streamId2Content[webcam] = 'webcam';
-      }
-    } else if (screenShare) {
-      if (screenShare in _this.streamId2Content && _this.unIdentifiedStreams.map(function (ms) {
-        return ms.id;
-      }).includes(screenShare)) {
-        var remoteScreenStream = _this.unIdentifiedStreams.find(function (ms) {
-          return ms.id === screenShare;
-        });
-
-        _this.unIdentifiedStreams = _this.unIdentifiedStreams.filter(function (ms) {
-          return ms.id !== screenShare;
-        });
-
-        _this.attachStreamToHtml('remote-screen-container', remoteScreenStream);
-      } else {
-        _this.streamId2Content[screenShare] = 'screenShare';
-      }
     } else if (metadata) {
       console.log("message received with metadata", metadata.name);
       _this.toReceive = metadata.size;
@@ -40013,10 +39950,23 @@ function Connection(onPeerConnected) {
     }
   });
 
-  if (onPeerConnected) {
-    this.onPeerConnectedCallback = onPeerConnected;
-  } //TODO: Could get callbacks in constructor for what to de when connected etc (e.g. enable/disable buttons)
+  _defineProperty(this, "runDataChannelTest", function (testDurationMs, onProgressFunc) {
+    //TODO: might create new PeerConnection for each new test        
+    var buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE);
 
+    _this.sendData(new File([buffer], 'testTransfer.txt'), testDurationMs, onProgressFunc, _this.peerConnection);
+  });
+
+  if (!onPeerConnected) {
+    throw new Error("Invalid value for onPeerConnected callback passed in Connection constructor");
+  }
+
+  if (!onRemoteStream) {
+    throw new Error("Invalid value for onRemoteStream callback passed in Connection constructor");
+  }
+
+  this.onPeerConnectedCallback = onPeerConnected;
+  this.onRemoteStreamCallback = onRemoteStream; //TODO: Could get callbacks in constructor for what to de when connected etc (e.g. enable/disable buttons)
 
   this.initializePeerEventHandlers(this.peerConnection, this.sendSignallingMessage);
   this.initializePeerEventHandlers(this.peerConnection2, this.sendSignallingMessage2);
@@ -40025,33 +39975,8 @@ function Connection(onPeerConnected) {
 // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
 ;
 
-function sendData(connectionObj, file, htmlProgressElementId) {
-  connectionObj.sendFile1(file, htmlProgressElementId);
-}
-
-function sendDataExtra(connectionObj, file, htmlProgressElementId) {
-  connectionObj.sendFile2(file, htmlProgressElementId);
-}
-
-function createSocketConnectionInstance(onPeerConnected) {
-  return new Connection(onPeerConnected);
-}
-
-function startCamera(connectionObj) {
-  return connectionObj.startLocalCamera();
-}
-
-function startScreenShare(connectionObj) {
-  return connectionObj.startLocalScreenShare();
-}
-
-function closeTopSender(connectionObj) {
-  connectionObj.closeMainSender();
-}
-
-function closeBottomSender(connectionObj) {
-  connectionObj.closeExtraSender();
-}
+var _default = Connection;
+exports.default = _default;
 },{"webrtc-adapter":"../../node_modules/webrtc-adapter/src/js/adapter_core.js","socket.io-client":"../../node_modules/socket.io-client/build/esm/index.js"}],"room-component.js":[function(require,module,exports) {
 "use strict";
 
@@ -40062,11 +39987,19 @@ exports.default = void 0;
 
 var _react = _interopRequireWildcard(require("react"));
 
-var _connection = require("./connection");
+var _connection = _interopRequireDefault(require("./connection"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _getRequireWildcardCache(nodeInterop) { if (typeof WeakMap !== "function") return null; var cacheBabelInterop = new WeakMap(); var cacheNodeInterop = new WeakMap(); return (_getRequireWildcardCache = function (nodeInterop) { return nodeInterop ? cacheNodeInterop : cacheBabelInterop; })(nodeInterop); }
 
 function _interopRequireWildcard(obj, nodeInterop) { if (!nodeInterop && obj && obj.__esModule) { return obj; } if (obj === null || typeof obj !== "object" && typeof obj !== "function") { return { default: obj }; } var cache = _getRequireWildcardCache(nodeInterop); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
+
+function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); if (enumerableOnly) { symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; }); } keys.push.apply(keys, symbols); } return keys; }
+
+function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i] != null ? arguments[i] : {}; if (i % 2) { ownKeys(Object(source), true).forEach(function (key) { _defineProperty(target, key, source[key]); }); } else if (Object.getOwnPropertyDescriptors) { Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)); } else { ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } } return target; }
+
+function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
 
 function _slicedToArray(arr, i) { return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest(); }
 
@@ -40080,12 +40013,8 @@ function _iterableToArrayLimit(arr, i) { var _i = arr == null ? null : typeof Sy
 
 function _arrayWithHoles(arr) { if (Array.isArray(arr)) return arr; }
 
-var FIRST_START_TIME = 10000;
-var NO_START_TIME = 99999999999;
-var VIDEO_1_START_TIME = FIRST_START_TIME;
-var FILE_TRANSFER_1_START = FIRST_START_TIME;
-var TEST_DATA_ARRAY_SIZE = 500000000;
-var urlSearchParams = ['video', 'data'];
+//setTimeout is stored as signed int 32, so this is max value
+var INFINITY_TIMEOUT = 2147483647;
 
 var RoomComponent = function RoomComponent(props) {
   var socketInstance = (0, _react.useRef)(null);
@@ -40095,146 +40024,176 @@ var RoomComponent = function RoomComponent(props) {
       chosenFile = _useState2[0],
       setChosenFile = _useState2[1];
 
+  var _useState3 = (0, _react.useState)(0),
+      _useState4 = _slicedToArray(_useState3, 2),
+      fileTransferProgress = _useState4[0],
+      setFileTransferProgress = _useState4[1];
+
+  var _useState5 = (0, _react.useState)(0),
+      _useState6 = _slicedToArray(_useState5, 2),
+      fileTransferSize = _useState6[0],
+      setFileTransferSize = _useState6[1];
+
+  var _useState7 = (0, _react.useState)({}),
+      _useState8 = _slicedToArray(_useState7, 2),
+      dataTransfersProgress = _useState8[0],
+      setDataTransfersProgress = _useState8[1];
+
   var urlParams = new URLSearchParams(window.location.search);
   (0, _react.useEffect)(function () {
-    socketInstance.current = (0, _connection.createSocketConnectionInstance)(setTimers);
+    socketInstance.current = new _connection.default(setTestTimeouts, handleRemoteStream);
   }, []);
+
+  var setTestTimeouts = function setTestTimeouts() {
+    var rtp1Start = getIntUrlParam('rtp1start') ? getIntUrlParam('rtp1start') : INFINITY_TIMEOUT;
+    var rtp1End = getIntUrlParam('rtp1end') ? getIntUrlParam('rtp1end') : INFINITY_TIMEOUT;
+    var rtp2Start = getIntUrlParam('rtp2start') ? getIntUrlParam('rtp2start') : INFINITY_TIMEOUT;
+    var rtp2End = getIntUrlParam('rtp2end') ? getIntUrlParam('rtp2end') : INFINITY_TIMEOUT;
+    var sctp1Start = getIntUrlParam('sctp1start') ? getIntUrlParam('sctp1start') : INFINITY_TIMEOUT;
+    var sctp1End = getIntUrlParam('sctp1end') ? getIntUrlParam('sctp1end') : INFINITY_TIMEOUT;
+    setTimeout(startMainVideo, rtp1Start);
+    setTimeout(closeMainVideo, rtp1End);
+    setTimeout(startExtraVideoStream, rtp2Start);
+    setTimeout(closeExtraVideo, rtp2End);
+    setTimeout(function () {
+      return startTestDataTransfer(sctp1End - sctp1Start);
+    }, sctp1Start);
+  };
 
   var urlFlagPresent = function urlFlagPresent(parameter) {
     return urlParams.has(parameter);
   };
 
-  var setTimers = function setTimers() {
-    setTimeout(startMainVideoStream, urlFlagPresent('video') ? FIRST_START_TIME : NO_START_TIME);
-    setTimeout(startExtraVideoStream, NO_START_TIME);
-    setTimeout(startTestFileTransfer, urlFlagPresent('data') ? FIRST_START_TIME : NO_START_TIME);
-    setTimeout(startExtraTestFileTransfer, NO_START_TIME);
+  var getIntUrlParam = function getIntUrlParam(parameter) {
+    var paramVal = urlParams.get(parameter);
+    return paramVal ? parseInt(paramVal) : null;
   };
 
   var handleFileInputChange = function handleFileInputChange(event) {
     var file = event.target.files[0];
-
-    if (!file) {
-      console.log("No file chosen");
-      setChosenFile(null);
-    } else {
-      console.log("File was chosen");
-      setChosenFile(file);
-    }
+    setChosenFile(file ? file : null);
   };
 
-  var handleSendFileButtonClicked = function handleSendFileButtonClicked(progressId) {
+  var handleSendFileButtonClicked = function handleSendFileButtonClicked() {
     if (chosenFile !== null) {
-      (0, _connection.sendData)(socketInstance.current, chosenFile, progressId);
+      setFileTransferSize(chosenFile.size);
+      socketInstance.current.sendFile(chosenFile, onFileTransferProgress);
     }
   };
 
-  var handleSendFileButtonClicked2 = function handleSendFileButtonClicked2(progressId) {
-    if (chosenFile !== null) {
-      (0, _connection.sendDataExtra)(socketInstance.current, chosenFile, progressId);
-    }
+  var startTestDataTransfer = function startTestDataTransfer(durationMS) {
+    socketInstance.current.runDataChannelTest(durationMS, onDataTransferProgress);
   };
 
-  var startTestFileTransfer = function startTestFileTransfer() {
-    var buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE);
-    var file = new File([buffer], "test.txt");
-    (0, _connection.sendData)(socketInstance.current, file, "send-progress");
-  };
-
-  var startExtraTestFileTransfer = function startExtraTestFileTransfer() {
-    var buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE);
-    var file = new File([buffer], "test.txt");
-    (0, _connection.sendDataExtra)(socketInstance.current, file, "send-progress2");
-  };
-
-  var startMainVideoStream = function startMainVideoStream() {
-    (0, _connection.startCamera)(socketInstance.current).then(function (stream) {
-      document.getElementById("local-camera-container").srcObject = stream;
+  var startMainVideo = function startMainVideo() {
+    socketInstance.current.startCamera().then(function (stream) {
+      document.getElementById("local-media-container").srcObject = stream;
     }).catch(function (err) {
       console.log("Starting local video failed: ".concat(err));
     });
   };
 
+  var closeMainVideo = function closeMainVideo() {
+    socketInstance.current.closeMainSender();
+    document.getElementById('local-media-container').srcObject = null;
+  };
+
   var startExtraVideoStream = function startExtraVideoStream() {
-    (0, _connection.startCamera)(socketInstance.current).then(function (stream) {
-      document.getElementById("local-screen-container").srcObject = stream;
+    socketInstance.current.startCamera().then(function (stream) {
+      document.getElementById("local-media-container2").srcObject = stream;
     }).catch(function (err) {
       console.log("Starting extra local video failed: ".concat(err));
     });
   };
 
+  var closeExtraVideo = function closeExtraVideo() {
+    socketInstance.current.closeExtraSender();
+    document.getElementById('local-media-container2').srcObject = null;
+  };
+
   var startMainScreenShare = function startMainScreenShare() {
-    (0, _connection.startScreenShare)(socketInstance.current).then(function (stream) {
-      document.getElementById("local-camera-container").srcObject = stream;
+    socketInstance.current.startScreenShare().then(function (stream) {
+      document.getElementById("local-media-container").srcObject = stream;
     }).catch(function (err) {
       console.log("Starting local screen share failed: ".concat(err));
     });
   };
 
+  var handleRemoteStream = function handleRemoteStream(streamObj) {
+    console.log("Handling remote stream.");
+
+    if (!document.getElementById("remote-media-container").srcObject) {
+      document.getElementById("remote-media-container").srcObject = streamObj;
+    } else if (!document.getElementById("remote-media-container2").srcObject) {
+      document.getElementById("remote-media-container2").srcObject = streamObj;
+    } else {
+      console.log("Error: More than 2 remote streams are being received.");
+    }
+  };
+
+  var onFileTransferProgress = function onFileTransferProgress(dataChannelId, progressBytes) {
+    setFileTransferProgress(progressBytes);
+  };
+
+  var onDataTransferProgress = function onDataTransferProgress(dataChannelId, progressBytes) {
+    var newObj = {};
+    newObj[dataChannelId] = progressBytes;
+    setDataTransfersProgress(_objectSpread(_objectSpread({}, dataTransfersProgress), newObj));
+  };
+
   return /*#__PURE__*/_react.default.createElement(_react.default.Fragment, null, /*#__PURE__*/_react.default.createElement("table", null, /*#__PURE__*/_react.default.createElement("tbody", null, /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
-    id: "local-camera-container",
+    id: "local-media-container",
     autoPlay: true,
     width: "640",
     height: "480"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Local video"), /*#__PURE__*/_react.default.createElement("button", {
-    onClick: startMainVideoStream
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Local media#1"), /*#__PURE__*/_react.default.createElement("button", {
+    onClick: startMainVideo
   }, "Start camera stream"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: startMainScreenShare
   }, "Start screen share"), /*#__PURE__*/_react.default.createElement("button", {
-    onClick: function onClick() {
-      return (0, _connection.closeTopSender)(socketInstance.current);
-    }
+    onClick: closeMainVideo
   }, "Close"))), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
-    id: "remote-camera-container",
+    id: "remote-media-container",
     autoPlay: true,
     width: "640",
     height: "480"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote camera")))), /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
-    id: "local-screen-container",
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote media#1")))), /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
+    id: "local-media-container2",
     autoPlay: true,
     width: "640",
     height: "480"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Local screen"), /*#__PURE__*/_react.default.createElement("button", {
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Local media#1"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: function onClick() {
       return enableScreenShare(socketInstance.current);
     }
   }, "Start screen share"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: startExtraVideoStream
   }, "Start extra camera stream"), /*#__PURE__*/_react.default.createElement("button", {
-    onClick: function onClick() {
-      return (0, _connection.closeBottomSender)(socketInstance.current);
-    }
+    onClick: closeExtraVideo
   }, "Close"))), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
-    id: "remote-screen-container",
+    id: "remote-media-container2",
     autoPlay: true,
     width: "640",
     height: "480"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote screen")))))), /*#__PURE__*/_react.default.createElement("section", null, /*#__PURE__*/_react.default.createElement("form", null, /*#__PURE__*/_react.default.createElement("input", {
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote media#2")))))), /*#__PURE__*/_react.default.createElement("section", null, /*#__PURE__*/_react.default.createElement("form", null, /*#__PURE__*/_react.default.createElement("input", {
     type: "file",
     onChange: handleFileInputChange
   })), /*#__PURE__*/_react.default.createElement("table", null, /*#__PURE__*/_react.default.createElement("tbody", null, /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("button", {
     onClick: function onClick() {
-      return handleSendFileButtonClicked("send-progress");
+      return handleSendFileButtonClicked();
     },
     disabled: chosenFile === null
   }, "Send file"), /*#__PURE__*/_react.default.createElement("a", {
     id: "download"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Send progress:"), /*#__PURE__*/_react.default.createElement("div", {
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Send progress:", fileTransferProgress, "/", fileTransferSize), /*#__PURE__*/_react.default.createElement("div", {
     id: "send-progress"
   }), /*#__PURE__*/_react.default.createElement("div", null, "Receive progress:"), /*#__PURE__*/_react.default.createElement("div", {
     id: "receive-progress"
-  })), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("button", {
-    onClick: function onClick() {
-      return handleSendFileButtonClicked2("send-progress2");
-    },
-    disabled: chosenFile === null
-  }, "Send file"), /*#__PURE__*/_react.default.createElement("a", {
-    id: "download2"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Send progress:"), /*#__PURE__*/_react.default.createElement("div", {
-    id: "send-progress2"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Receive progress:"), /*#__PURE__*/_react.default.createElement("div", {
-    id: "receive-progress2"
-  })))))));
+  })), Object.entries(dataTransfersProgress).map(function (e) {
+    return /*#__PURE__*/_react.default.createElement("td", {
+      key: e[0]
+    }, /*#__PURE__*/_react.default.createElement("div", null, "RTCDataChannelId: ", e[0]), /*#__PURE__*/_react.default.createElement("div", null, "Sent bytes: ", e[1]));
+  }))))));
 };
 
 var _default = RoomComponent;
@@ -40348,7 +40307,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "40671" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "38461" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};
