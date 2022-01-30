@@ -28,16 +28,16 @@ const DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_S
 
 
 class Connection {
-    peerConnection = new RTCPeerConnection(peerConnectionConfig);
+    peerConnection = null;
     socket = io();
     roomId = null;
+
+    stream = null;
 
     onPeerConnectedCallback = null;
     onRemoteStreamCallback = null;
 
-    // RTCSender, so it can be removed when wanting to close a videostream
-    mediaSender = null;
-
+    // DataChannel transfer state variables
     receiveBuffer = [];
     receivedSize = 0;
     toReceive = null;
@@ -52,7 +52,7 @@ class Connection {
         this.roomId = connectionId;
         this.onPeerConnectedCallback = onPeerConnected;
         this.onRemoteStreamCallback = onRemoteStream;
-        this.initializePeerEventHandlers(this.peerConnection);
+        this.createConnection();
         this.initializeSocketEvents();
     }
 
@@ -90,21 +90,32 @@ class Connection {
             }
             this.sendSignallingMessage({ready: 'ready'});
         });
+        this.socket.on('left', (roomId) => {
+            console.log("Other client left the room, restarting peerConnection");
+            this.destroyConnection();
+            this.createConnection();
+        });
+    }
+
+    createConnection = () => {
+        console.log(`Creating new RTCPeerConnection`);
+        this.peerConnection = new RTCPeerConnection(peerConnectionConfig);
+        this.initializePeerEventHandlers(this.peerConnection);
     }
 
     initializePeerEventHandlers = (pc) => {
         pc.onicecandidate = ({candidate}) => this.sendSignallingMessage({candidate});
 
         pc.onconnectionstatechange = () => {
-            if (pc.connectionState === 'connected') {
-                console.log('RTCPeerConnection is connected');
-            }
-            else if (pc.connectionState === 'failed') {
-                pc.restartIce();
-            }
-            else if (pc.connectionState === 'closed'
-                || pc.connectionState === 'disconnected') {
-                console.log('peer connection closed or disconnected');
+            switch (pc.connectionState) {
+                case 'failed':
+                    pc.restartIce();
+                    break;
+                case 'closed':
+                    this.destroyConnection();
+                    break;
+                default:
+                    console.log(`RTCPeerConnection is ${pc.connectionState}`);
             }
         };
 
@@ -192,16 +203,22 @@ class Connection {
     }
 
     handleNewStreamStarted = (stream) => {
-        if(this.mediaSender === null) {
-            this.mediaSender = this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
-            return stream;
-        }
+        this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
+        this.stream = stream;
+        return stream;
     }
 
-    closeMediaSender = () => {
-        if(this.mediaSender !== null) {
-            this.peerConnection.removeTrack(this.mediaSender);
-            this.mediaSender = null;
+    stopAllStreams = () => {
+        const tracks = this.stream.getTracks();
+        tracks.forEach(track => {
+            track.stop();
+        });
+    }
+
+    destroyConnection = () => {
+        console.log("Destroying RTCPeerConnection");
+        if (this.peerConnection) {
+            this.peerConnection.close();
         }
     }
 
@@ -252,8 +269,8 @@ class Connection {
             };
 
             const maybeUpdateProgress = () => {
-                // TODO: this function might be reduntant
-                if ((new Date()).getTime()-prevProgressUpdate >= 1000) {
+                // TODO: this throttling might be reduntant
+                if ((new Date()).getTime()-prevProgressUpdate >= 100) {
                     onProgressCallback(sendChannel.id, offset);
                     prevProgressUpdate = new Date().getTime();
                 }

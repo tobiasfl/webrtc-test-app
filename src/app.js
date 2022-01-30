@@ -3,6 +3,7 @@ const path = require('path');
 const app = express();
 const https = require('https');
 const fs = require('fs');
+const { type } = require('express/lib/response');
 
 const options = {
     key: fs.readFileSync('key.pem'),
@@ -18,7 +19,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req,res)=>{
     res.sendFile(path.resolve(__dirname, "public","index.html"));
 })
-
 
 
 console.log("initing socket event handlers");
@@ -58,6 +58,13 @@ io.on('connection', socket => {
                 }
             });
     })
+    socket.on('disconnecting', () => {
+        // First element is socketId, so assume it was only part
+        // of the roomId on the last index
+        roomId = socket.rooms.forEach(roomId => {
+            io.to(roomId).emit('left');
+        });
+    });
     socket.on('disconnect', () => {
         console.log(`a user disconnected, total sockets remaining: ${io.of("/").sockets.size}`);
     });

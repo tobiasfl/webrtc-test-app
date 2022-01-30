@@ -29643,7 +29643,26 @@ var reloadCSS = require('_css_loader');
 
 module.hot.dispose(reloadCSS);
 module.hot.accept(reloadCSS);
-},{"_css_loader":"../../node_modules/parcel-bundler/src/builtins/css-loader.js"}],"../../node_modules/webrtc-adapter/src/js/utils.js":[function(require,module,exports) {
+},{"_css_loader":"../../node_modules/parcel-bundler/src/builtins/css-loader.js"}],"config-helper.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.resolveIntUrlParam = void 0;
+var urlParams = new URLSearchParams(window.location.search);
+
+var resolveIntUrlParam = function resolveIntUrlParam(param, defaultVal) {
+  return getIntUrlParam(param) !== null ? getIntUrlParam(param) : defaultVal;
+};
+
+exports.resolveIntUrlParam = resolveIntUrlParam;
+
+var getIntUrlParam = function getIntUrlParam(parameter) {
+  var paramVal = urlParams.get(parameter);
+  return paramVal ? parseInt(paramVal) : null;
+};
+},{}],"../../node_modules/webrtc-adapter/src/js/utils.js":[function(require,module,exports) {
 /*
  *  Copyright (c) 2016 The WebRTC project authors. All Rights Reserved.
  *
@@ -39588,24 +39607,24 @@ var TEST_DATA_ARRAY_SIZE = 500000000; //16MiB in bytes
 var DC_BUFFERED_AMOUNT_MAX_THRESH = 1677216;
 var DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_SIZE;
 
-var Connection = // RTCSender, so it can be removed when wanting to close a videostream
+var Connection = // DataChannel transfer state variables
 // ICE negotation state variables
 function Connection(connectionId, onPeerConnected, onRemoteStream) {
   var _this = this;
 
   _classCallCheck(this, Connection);
 
-  _defineProperty(this, "peerConnection", new RTCPeerConnection(peerConnectionConfig));
+  _defineProperty(this, "peerConnection", null);
 
   _defineProperty(this, "socket", io());
 
   _defineProperty(this, "roomId", null);
 
+  _defineProperty(this, "stream", null);
+
   _defineProperty(this, "onPeerConnectedCallback", null);
 
   _defineProperty(this, "onRemoteStreamCallback", null);
-
-  _defineProperty(this, "mediaSender", null);
 
   _defineProperty(this, "receiveBuffer", []);
 
@@ -39657,6 +39676,21 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
         ready: 'ready'
       });
     });
+
+    _this.socket.on('left', function (roomId) {
+      console.log("Other client left the room, restarting peerConnection");
+
+      _this.destroyConnection();
+
+      _this.createConnection();
+    });
+  });
+
+  _defineProperty(this, "createConnection", function () {
+    console.log("Creating new RTCPeerConnection");
+    _this.peerConnection = new RTCPeerConnection(peerConnectionConfig);
+
+    _this.initializePeerEventHandlers(_this.peerConnection);
   });
 
   _defineProperty(this, "initializePeerEventHandlers", function (pc) {
@@ -39668,12 +39702,18 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
     };
 
     pc.onconnectionstatechange = function () {
-      if (pc.connectionState === 'connected') {
-        console.log('RTCPeerConnection is connected');
-      } else if (pc.connectionState === 'failed') {
-        pc.restartIce();
-      } else if (pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
-        console.log('peer connection closed or disconnected');
+      switch (pc.connectionState) {
+        case 'failed':
+          pc.restartIce();
+          break;
+
+        case 'closed':
+          _this.destroyConnection();
+
+          break;
+
+        default:
+          console.log("RTCPeerConnection is ".concat(pc.connectionState));
       }
     };
 
@@ -39763,17 +39803,25 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
   });
 
   _defineProperty(this, "handleNewStreamStarted", function (stream) {
-    if (_this.mediaSender === null) {
-      _this.mediaSender = _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
-      return stream;
-    }
+    _this.peerConnection.addTrack(stream.getVideoTracks()[0], stream);
+
+    _this.stream = stream;
+    return stream;
   });
 
-  _defineProperty(this, "closeMediaSender", function () {
-    if (_this.mediaSender !== null) {
-      _this.peerConnection.removeTrack(_this.mediaSender);
+  _defineProperty(this, "stopAllStreams", function () {
+    var tracks = _this.stream.getTracks();
 
-      _this.mediaSender = null;
+    tracks.forEach(function (track) {
+      track.stop();
+    });
+  });
+
+  _defineProperty(this, "destroyConnection", function () {
+    console.log("Destroying RTCPeerConnection");
+
+    if (_this.peerConnection) {
+      _this.peerConnection.close();
     }
   });
 
@@ -39833,8 +39881,8 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
       };
 
       var maybeUpdateProgress = function maybeUpdateProgress() {
-        // TODO: this function might be reduntant
-        if (new Date().getTime() - prevProgressUpdate >= 1000) {
+        // TODO: this throttling might be reduntant
+        if (new Date().getTime() - prevProgressUpdate >= 100) {
           onProgressCallback(sendChannel.id, offset);
           prevProgressUpdate = new Date().getTime();
         }
@@ -39936,7 +39984,7 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
   this.roomId = connectionId;
   this.onPeerConnectedCallback = onPeerConnected;
   this.onRemoteStreamCallback = onRemoteStream;
-  this.initializePeerEventHandlers(this.peerConnection);
+  this.createConnection();
   this.initializeSocketEvents();
 } // Signaling server interaction 
 // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
@@ -39953,6 +40001,8 @@ Object.defineProperty(exports, "__esModule", {
 exports.default = void 0;
 
 var _react = _interopRequireWildcard(require("react"));
+
+var _configHelper = require("./config-helper");
 
 var _connection = _interopRequireDefault(require("./connection"));
 
@@ -39986,6 +40036,7 @@ var INFINITY_TIMEOUT = 2147483647;
 var RoomComponent = function RoomComponent(props) {
   var socketInstance = (0, _react.useRef)(null);
   var socketInstance2 = (0, _react.useRef)(null);
+  var socketInstance3 = (0, _react.useRef)(null);
 
   var _useState = (0, _react.useState)(null),
       _useState2 = _slicedToArray(_useState, 2),
@@ -40007,34 +40058,35 @@ var RoomComponent = function RoomComponent(props) {
       dataTransfersProgress = _useState8[0],
       setDataTransfersProgress = _useState8[1];
 
-  var urlParams = new URLSearchParams(window.location.search);
   (0, _react.useEffect)(function () {
     socketInstance.current = new _connection.default('pc1', setTestTimeouts, handleRemoteStream);
     socketInstance2.current = new _connection.default('pc2', setTestTimeouts2, handleRemoteStream);
+    socketInstance3.current = new _connection.default('pc3', setTestTimeouts3, handleRemoteStream);
   }, []);
 
   var setTestTimeouts = function setTestTimeouts() {
-    var rtp1Start = getIntUrlParam('rtp1start') ? getIntUrlParam('rtp1start') : INFINITY_TIMEOUT;
-    var rtp1End = getIntUrlParam('rtp1end') ? getIntUrlParam('rtp1end') : INFINITY_TIMEOUT;
-    var sctp1Start = getIntUrlParam('sctp1start') ? getIntUrlParam('sctp1start') : INFINITY_TIMEOUT;
-    var sctp1End = getIntUrlParam('sctp1end') ? getIntUrlParam('sctp1end') : INFINITY_TIMEOUT;
+    var rtp1Start = (0, _configHelper.resolveIntUrlParam)('rtp1start', INFINITY_TIMEOUT);
+    var rtp1End = (0, _configHelper.resolveIntUrlParam)('rtp1end', INFINITY_TIMEOUT);
     setTimeout(startMainVideo, rtp1Start);
     setTimeout(closeMainVideo, rtp1End);
-    setTimeout(function () {
-      return startTestDataTransfer(sctp1End - sctp1Start);
-    }, sctp1Start);
+    setTimeout(socketInstance.current.destroyConnection, rtp1End);
   };
 
   var setTestTimeouts2 = function setTestTimeouts2() {
-    var rtp2Start = getIntUrlParam('rtp2start') ? getIntUrlParam('rtp2start') : INFINITY_TIMEOUT;
-    var rtp2End = getIntUrlParam('rtp2end') ? getIntUrlParam('rtp2end') : INFINITY_TIMEOUT;
+    var rtp2Start = (0, _configHelper.resolveIntUrlParam)('rtp2start', INFINITY_TIMEOUT);
+    var rtp2End = (0, _configHelper.resolveIntUrlParam)('rtp2end', INFINITY_TIMEOUT);
     setTimeout(startExtraVideoStream, rtp2Start);
     setTimeout(closeExtraVideo, rtp2End);
+    setTimeout(socketInstance2.current.destroyConnection, rtp2End);
   };
 
-  var getIntUrlParam = function getIntUrlParam(parameter) {
-    var paramVal = urlParams.get(parameter);
-    return paramVal ? parseInt(paramVal) : null;
+  var setTestTimeouts3 = function setTestTimeouts3() {
+    var sctp1Start = (0, _configHelper.resolveIntUrlParam)('sctp1start', INFINITY_TIMEOUT);
+    var sctp1End = (0, _configHelper.resolveIntUrlParam)('sctp1end', INFINITY_TIMEOUT);
+    setTimeout(function () {
+      return socketInstance3.current.runDataChannelTest(sctp1End - sctp1Start, onDataTransferProgress);
+    }, sctp1Start);
+    setTimeout(socketInstance3.current.destroyConnection, sctp1End);
   };
 
   var handleFileInputChange = function handleFileInputChange(event) {
@@ -40049,10 +40101,6 @@ var RoomComponent = function RoomComponent(props) {
     }
   };
 
-  var startTestDataTransfer = function startTestDataTransfer(durationMS) {
-    socketInstance.current.runDataChannelTest(durationMS, onDataTransferProgress);
-  };
-
   var startMainVideo = function startMainVideo() {
     socketInstance.current.startCamera().then(function (stream) {
       document.getElementById("local-media-container").srcObject = stream;
@@ -40062,7 +40110,7 @@ var RoomComponent = function RoomComponent(props) {
   };
 
   var closeMainVideo = function closeMainVideo() {
-    socketInstance.current.closeMediaSender();
+    socketInstance.current.stopAllStreams();
     document.getElementById('local-media-container').srcObject = null;
   };
 
@@ -40075,12 +40123,12 @@ var RoomComponent = function RoomComponent(props) {
   };
 
   var closeExtraVideo = function closeExtraVideo() {
-    socketInstance2.current.closeExtraSender();
+    socketInstance2.current.stopAllStreams();
     document.getElementById('local-media-container2').srcObject = null;
   };
 
   var startMainScreenShare = function startMainScreenShare() {
-    socketInstance.current.startScreenShare().then(function (stream) {
+    socketInstance.current.startLocalScreenShare().then(function (stream) {
       document.getElementById("local-media-container").srcObject = stream;
     }).catch(function (err) {
       console.log("Starting local screen share failed: ".concat(err));
@@ -40131,9 +40179,7 @@ var RoomComponent = function RoomComponent(props) {
     width: "640",
     height: "480"
   }), /*#__PURE__*/_react.default.createElement("div", null, "Local media#2"), /*#__PURE__*/_react.default.createElement("button", {
-    onClick: function onClick() {
-      return enableScreenShare(socketInstance.current);
-    }
+    onClick: startMainScreenShare
   }, "Start screen share"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: startExtraVideoStream
   }, "Start extra camera stream"), /*#__PURE__*/_react.default.createElement("button", {
@@ -40166,7 +40212,7 @@ var RoomComponent = function RoomComponent(props) {
 
 var _default = RoomComponent;
 exports.default = _default;
-},{"react":"../../node_modules/react/index.js","./connection":"connection.js"}],"App.js":[function(require,module,exports) {
+},{"react":"../../node_modules/react/index.js","./config-helper":"config-helper.js","./connection":"connection.js"}],"App.js":[function(require,module,exports) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -40275,7 +40321,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "38461" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "37457" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

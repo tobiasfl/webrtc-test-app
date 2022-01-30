@@ -128,6 +128,10 @@ const https = require('https');
 
 const fs = require('fs');
 
+const {
+  type
+} = require('express/lib/response');
+
 const options = {
   key: fs.readFileSync('key.pem'),
   cert: fs.readFileSync('cert.pem')
@@ -165,6 +169,13 @@ io.on('connection', socket => {
         console.log('Rejected a client, room full');
         socket.emit('full');
       }
+    });
+  });
+  socket.on('disconnecting', () => {
+    // First element is socketId, so assume it was only part
+    // of the roomId on the last index
+    roomId = socket.rooms.forEach(roomId => {
+      io.to(roomId).emit('left');
     });
   });
   socket.on('disconnect', () => {
