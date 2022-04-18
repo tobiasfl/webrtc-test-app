@@ -29649,7 +29649,7 @@ module.hot.accept(reloadCSS);
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.resolveIntUrlParam = void 0;
+exports.urlParamPresent = exports.resolveIntUrlParam = void 0;
 var urlParams = new URLSearchParams(window.location.search);
 
 var resolveIntUrlParam = function resolveIntUrlParam(param, defaultVal) {
@@ -29657,6 +29657,12 @@ var resolveIntUrlParam = function resolveIntUrlParam(param, defaultVal) {
 };
 
 exports.resolveIntUrlParam = resolveIntUrlParam;
+
+var urlParamPresent = function urlParamPresent(param) {
+  return getIntUrlParam(param) !== null;
+};
+
+exports.urlParamPresent = urlParamPresent;
 
 var getIntUrlParam = function getIntUrlParam(parameter) {
   var paramVal = urlParams.get(parameter);
@@ -39594,7 +39600,17 @@ var peerConnectionConfig = {
 //https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation
 
 var mediaConstraints = {
-  video: true,
+  video: {
+    width: {
+      min: 1280
+    },
+    height: {
+      min: 720
+    },
+    frameRate: {
+      min: 50
+    }
+  },
   audio: false
 }; //How big messages we can send on data channel
 
@@ -39602,7 +39618,7 @@ var DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
 var DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE = 262144;
 var DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE; //500MB in bytes
 
-var TEST_DATA_ARRAY_SIZE = 500000000; //16MiB in bytes
+var TEST_DATA_ARRAY_SIZE = 500000000; //1.6MiB in bytes
 
 var DC_BUFFERED_AMOUNT_MAX_THRESH = 1677216;
 var DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_SIZE;
@@ -39639,6 +39655,8 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
   _defineProperty(this, "ignoreOffer", false);
 
   _defineProperty(this, "polite", false);
+
+  _defineProperty(this, "codecList", null);
 
   _defineProperty(this, "initializeSocketEvents", function () {
     _this.socket.on('connect', function () {
@@ -39690,7 +39708,25 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
     console.log("Creating new RTCPeerConnection");
     _this.peerConnection = new RTCPeerConnection(peerConnectionConfig);
 
-    _this.initializePeerEventHandlers(_this.peerConnection);
+    _this.initializePeerEventHandlers(_this.peerConnection); //setting to VP8
+
+
+    var transceivers = _this.peerConnection.getTransceivers();
+
+    var mimeType = "video/VP8";
+    transceivers.forEach(function (transceiver) {
+      var kind = transceiver.sender.track.kind;
+      var sendCodecs = RTCRtpSender.getCapabilities(kind).codecs;
+      var recvCodecs = RTCRtpReceiver.getCapabilities(kind).codecs;
+
+      if (kind === "video") {
+        transceiver.setCodecPreferences([sendCodecs.filter(function (c) {
+          return c.mimeType === mimeType;
+        }), recvCodecs.filter(function (c) {
+          return c.mimeType === mimeType;
+        })]);
+      }
+    });
   });
 
   _defineProperty(this, "initializePeerEventHandlers", function (pc) {
@@ -39719,6 +39755,18 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
 
     pc.onicegatheringstatechange = function (event) {
       console.log("change in ice gathering state: ".concat(event.target.iceGatheringState));
+
+      if (pc.iceGatheringState === "complete") {
+        var senders = pc.getSenders();
+        senders.forEach(function (sender) {
+          if (sender.track.kind === "video") {
+            _this.codecList = sender.getParameters().codecs;
+            console.log(JSON.stringify(_this.codecList));
+            return;
+          }
+        });
+      } //this.codecList = null;
+
     };
 
     pc.onicecandidateerror = function (event) {
@@ -39799,6 +39847,25 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
   _defineProperty(this, "startCamera", function () {
     return navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
       return _this.handleNewStreamStarted(stream);
+    });
+  });
+
+  _defineProperty(this, "setMaxBitrate", function (bitRate) {
+    var senderList = _this.peerConnection.getSenders();
+
+    senderList.forEach(function (sender) {
+      var params = sender.getParameters();
+
+      if (!params.encodings) {
+        params.encodings = [{}];
+      }
+
+      params.encodings[0].maxBitrate = bitRate;
+      sender.setParameters(params).then(function () {
+        console.log("Max bitrate set to: ".concat(bitRate));
+      }).catch(function (err) {
+        console.log("Setting max bitrate failed: ".concat(err));
+      });
     });
   });
 
@@ -40036,32 +40103,40 @@ var INFINITY_TIMEOUT = 2147483647;
 var RoomComponent = function RoomComponent(props) {
   var socketInstance = (0, _react.useRef)(null);
   var socketInstance2 = (0, _react.useRef)(null);
-  var socketInstance3 = (0, _react.useRef)(null);
 
-  var _useState = (0, _react.useState)(null),
+  var _useState = (0, _react.useState)(""),
       _useState2 = _slicedToArray(_useState, 2),
-      chosenFile = _useState2[0],
-      setChosenFile = _useState2[1];
+      socket1Settings = _useState2[0],
+      setSocket1Settings = _useState2[1];
 
-  var _useState3 = (0, _react.useState)(0),
+  var _useState3 = (0, _react.useState)(""),
       _useState4 = _slicedToArray(_useState3, 2),
-      fileTransferProgress = _useState4[0],
-      setFileTransferProgress = _useState4[1];
+      remoteStreamSettings = _useState4[0],
+      setRemoteStreamSettings = _useState4[1];
 
-  var _useState5 = (0, _react.useState)(0),
+  var _useState5 = (0, _react.useState)(null),
       _useState6 = _slicedToArray(_useState5, 2),
-      fileTransferSize = _useState6[0],
-      setFileTransferSize = _useState6[1];
+      chosenFile = _useState6[0],
+      setChosenFile = _useState6[1];
 
-  var _useState7 = (0, _react.useState)({}),
+  var _useState7 = (0, _react.useState)(0),
       _useState8 = _slicedToArray(_useState7, 2),
-      dataTransfersProgress = _useState8[0],
-      setDataTransfersProgress = _useState8[1];
+      fileTransferProgress = _useState8[0],
+      setFileTransferProgress = _useState8[1];
+
+  var _useState9 = (0, _react.useState)(0),
+      _useState10 = _slicedToArray(_useState9, 2),
+      fileTransferSize = _useState10[0],
+      setFileTransferSize = _useState10[1];
+
+  var _useState11 = (0, _react.useState)({}),
+      _useState12 = _slicedToArray(_useState11, 2),
+      dataTransfersProgress = _useState12[0],
+      setDataTransfersProgress = _useState12[1];
 
   (0, _react.useEffect)(function () {
     socketInstance.current = new _connection.default('pc1', setTestTimeouts, handleRemoteStream);
     socketInstance2.current = new _connection.default('pc2', setTestTimeouts2, handleRemoteStream);
-    socketInstance3.current = new _connection.default('pc3', setTestTimeouts3, handleRemoteStream);
   }, []);
 
   var setTestTimeouts = function setTestTimeouts() {
@@ -40069,7 +40144,12 @@ var RoomComponent = function RoomComponent(props) {
     var rtp1End = (0, _configHelper.resolveIntUrlParam)('rtp1end', INFINITY_TIMEOUT);
     setTimeout(startMainVideo, rtp1Start);
     setTimeout(closeMainVideo, rtp1End);
-    setTimeout(socketInstance.current.destroyConnection, rtp1End);
+    var sctp1Start = (0, _configHelper.resolveIntUrlParam)('sctp1start', INFINITY_TIMEOUT);
+    var sctp1End = (0, _configHelper.resolveIntUrlParam)('sctp1end', INFINITY_TIMEOUT);
+    setTimeout(function () {
+      return socketInstance.current.runDataChannelTest(sctp1End - sctp1Start, onDataTransferProgress);
+    }, sctp1Start);
+    setTimeout(socketInstance.current.destroyConnection, Math.max(rtp1End, sctp1End));
   };
 
   var setTestTimeouts2 = function setTestTimeouts2() {
@@ -40077,16 +40157,12 @@ var RoomComponent = function RoomComponent(props) {
     var rtp2End = (0, _configHelper.resolveIntUrlParam)('rtp2end', INFINITY_TIMEOUT);
     setTimeout(startExtraVideoStream, rtp2Start);
     setTimeout(closeExtraVideo, rtp2End);
-    setTimeout(socketInstance2.current.destroyConnection, rtp2End);
-  };
-
-  var setTestTimeouts3 = function setTestTimeouts3() {
-    var sctp1Start = (0, _configHelper.resolveIntUrlParam)('sctp1start', INFINITY_TIMEOUT);
-    var sctp1End = (0, _configHelper.resolveIntUrlParam)('sctp1end', INFINITY_TIMEOUT);
+    var sctp2Start = (0, _configHelper.resolveIntUrlParam)('sctp2start', INFINITY_TIMEOUT);
+    var sctp2End = (0, _configHelper.resolveIntUrlParam)('sctp2end', INFINITY_TIMEOUT);
     setTimeout(function () {
-      return socketInstance3.current.runDataChannelTest(sctp1End - sctp1Start, onDataTransferProgress);
-    }, sctp1Start);
-    setTimeout(socketInstance3.current.destroyConnection, sctp1End);
+      return socketInstance2.current.runDataChannelTest(sctp2End - sctp2Start, onDataTransferProgress);
+    }, sctp2Start);
+    setTimeout(socketInstance2.current.destroyConnection, Math.max(rtp2End, sctp2End));
   };
 
   var handleFileInputChange = function handleFileInputChange(event) {
@@ -40104,6 +40180,7 @@ var RoomComponent = function RoomComponent(props) {
   var startMainVideo = function startMainVideo() {
     socketInstance.current.startCamera().then(function (stream) {
       document.getElementById("local-media-container").srcObject = stream;
+      setSocket1Settings(getStreamSettings(stream));
     }).catch(function (err) {
       console.log("Starting local video failed: ".concat(err));
     });
@@ -40135,7 +40212,13 @@ var RoomComponent = function RoomComponent(props) {
     });
   };
 
+  var getStreamSettings = function getStreamSettings(stream) {
+    var track = stream.getVideoTracks()[0];
+    return JSON.stringify(track.getSettings());
+  };
+
   var handleRemoteStream = function handleRemoteStream(streamObj) {
+    setRemoteStreamSettings(getStreamSettings(streamObj));
     console.log("Handling remote stream.");
 
     if (!document.getElementById("remote-media-container").srcObject) {
@@ -40160,24 +40243,24 @@ var RoomComponent = function RoomComponent(props) {
   return /*#__PURE__*/_react.default.createElement(_react.default.Fragment, null, /*#__PURE__*/_react.default.createElement("table", null, /*#__PURE__*/_react.default.createElement("tbody", null, /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
     id: "local-media-container",
     autoPlay: true,
-    width: "640",
-    height: "480"
+    width: "1280",
+    height: "720"
   }), /*#__PURE__*/_react.default.createElement("div", null, "Local media#1"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: startMainVideo
   }, "Start camera stream"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: startMainScreenShare
   }, "Start screen share"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: closeMainVideo
-  }, "Close"))), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
+  }, "Close"), /*#__PURE__*/_react.default.createElement("div", null, socket1Settings))), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
     id: "remote-media-container",
     autoPlay: true,
-    width: "640",
-    height: "480"
+    width: "1280",
+    height: "720"
   }), /*#__PURE__*/_react.default.createElement("div", null, "Remote media#1")))), /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
     id: "local-media-container2",
     autoPlay: true,
-    width: "640",
-    height: "480"
+    width: "1280",
+    height: "720"
   }), /*#__PURE__*/_react.default.createElement("div", null, "Local media#2"), /*#__PURE__*/_react.default.createElement("button", {
     onClick: startMainScreenShare
   }, "Start screen share"), /*#__PURE__*/_react.default.createElement("button", {
@@ -40187,9 +40270,9 @@ var RoomComponent = function RoomComponent(props) {
   }, "Close"))), /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("div", null, /*#__PURE__*/_react.default.createElement("video", {
     id: "remote-media-container2",
     autoPlay: true,
-    width: "640",
-    height: "480"
-  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote media#2")))))), /*#__PURE__*/_react.default.createElement("section", null, /*#__PURE__*/_react.default.createElement("form", null, /*#__PURE__*/_react.default.createElement("input", {
+    width: "1280",
+    height: "720"
+  }), /*#__PURE__*/_react.default.createElement("div", null, "Remote media#2"), /*#__PURE__*/_react.default.createElement("div", null, remoteStreamSettings)))))), /*#__PURE__*/_react.default.createElement("section", null, /*#__PURE__*/_react.default.createElement("form", null, /*#__PURE__*/_react.default.createElement("input", {
     type: "file",
     onChange: handleFileInputChange
   })), /*#__PURE__*/_react.default.createElement("table", null, /*#__PURE__*/_react.default.createElement("tbody", null, /*#__PURE__*/_react.default.createElement("tr", null, /*#__PURE__*/_react.default.createElement("td", null, /*#__PURE__*/_react.default.createElement("button", {
@@ -40321,7 +40404,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "37457" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "41909" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

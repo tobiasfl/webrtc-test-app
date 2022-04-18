@@ -11,7 +11,13 @@ const peerConnectionConfig = { iceServers: [{
 //https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation
 
 
-const mediaConstraints = {video: true, audio: false};
+const mediaConstraints = {
+    video: {
+        width: { min: 1280 },
+        height: { min: 720 },
+        frameRate: { min: 50 }
+    }, 
+    audio: false};
 
 //How big messages we can send on data channel
 const DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
@@ -22,7 +28,7 @@ const DC_CHUNK_SIZE = DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE;
 //500MB in bytes
 const TEST_DATA_ARRAY_SIZE = 500000000
 
-//16MiB in bytes
+//1.6MiB in bytes
 const DC_BUFFERED_AMOUNT_MAX_THRESH = 1677216;
 const DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_SIZE;
 
@@ -47,6 +53,8 @@ class Connection {
     makingOffer = false;
     ignoreOffer = false;
     polite = false;
+
+    codecList = null;
 
     constructor(connectionId, onPeerConnected, onRemoteStream) {
         this.roomId = connectionId;
@@ -101,6 +109,21 @@ class Connection {
         console.log(`Creating new RTCPeerConnection`);
         this.peerConnection = new RTCPeerConnection(peerConnectionConfig);
         this.initializePeerEventHandlers(this.peerConnection);
+        //setting to VP8
+        const transceivers = this.peerConnection.getTransceivers();
+        const mimeType = "video/VP8";
+
+        transceivers.forEach(transceiver => {
+            const kind = transceiver.sender.track.kind;
+            let sendCodecs = RTCRtpSender.getCapabilities(kind).codecs;
+            let recvCodecs = RTCRtpReceiver.getCapabilities(kind).codecs;
+
+            if (kind === "video") {
+                transceiver.setCodecPreferences([
+                    sendCodecs.filter(c => c.mimeType === mimeType), 
+                    recvCodecs.filter(c => c.mimeType === mimeType)]);
+            }
+        });
     }
 
     initializePeerEventHandlers = (pc) => {
@@ -121,6 +144,20 @@ class Connection {
 
         pc.onicegatheringstatechange = event => {
             console.log(`change in ice gathering state: ${event.target.iceGatheringState}`)
+
+            if (pc.iceGatheringState === "complete") {
+                const senders = pc.getSenders();
+
+                senders.forEach((sender) => {
+                    if (sender.track.kind === "video") {
+                        this.codecList = sender.getParameters().codecs;
+                        console.log(JSON.stringify(this.codecList));
+                        return;
+                    }
+                })
+            }
+
+            //this.codecList = null;
         };
 
         pc.onicecandidateerror = event => {
@@ -200,6 +237,27 @@ class Connection {
             .then(stream => {
                 return this.handleNewStreamStarted(stream);
             });
+    }
+
+    //BUG: This one is not working at the moment
+    setMaxBitrate = (bitRate) => {
+        const senderList = this.peerConnection.getSenders();
+        senderList.forEach(sender => {
+            const params = sender.getParameters();
+
+            if (!params.encodings) {
+                params.encodings = [{}];
+            }
+
+            params.encodings[0].maxBitrate = bitRate;
+            sender.setParameters(params)
+                .then(() => {
+                    console.log(`Max bitrate set to: ${bitRate}`);
+                })
+                .catch(err => {
+                    console.log(`Setting max bitrate failed: ${err}`)
+                });
+        });
     }
 
     handleNewStreamStarted = (stream) => {

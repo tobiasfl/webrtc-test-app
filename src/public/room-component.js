@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {resolveIntUrlParam} from './config-helper';
+import {resolveIntUrlParam, urlParamPresent} from './config-helper';
 import Connection from './connection';
 
 //setTimeout is stored as signed int 32, so this is max value
@@ -8,7 +8,10 @@ const INFINITY_TIMEOUT = 2147483647;
 const RoomComponent = (props) => {
     let socketInstance = useRef(null);
     let socketInstance2 = useRef(null);
-    let socketInstance3 = useRef(null);
+
+    const [socket1Settings, setSocket1Settings] = useState("");
+
+    const [remoteStreamSettings, setRemoteStreamSettings] = useState("");
 
     const [chosenFile, setChosenFile] = useState(null);
     const [fileTransferProgress, setFileTransferProgress] = useState(0);
@@ -18,32 +21,32 @@ const RoomComponent = (props) => {
     useEffect(() => {
         socketInstance.current = new Connection('pc1', setTestTimeouts, handleRemoteStream);
         socketInstance2.current = new Connection('pc2', setTestTimeouts2, handleRemoteStream);
-        socketInstance3.current = new Connection('pc3', setTestTimeouts3, handleRemoteStream);
     }, []);
 
     const setTestTimeouts = () => {
         const rtp1Start = resolveIntUrlParam('rtp1start', INFINITY_TIMEOUT);
         const rtp1End = resolveIntUrlParam('rtp1end', INFINITY_TIMEOUT);
-        
         setTimeout(startMainVideo, rtp1Start);
         setTimeout(closeMainVideo, rtp1End);
-        setTimeout(socketInstance.current.destroyConnection, rtp1End);
+
+        const sctp1Start = resolveIntUrlParam('sctp1start', INFINITY_TIMEOUT);
+        const sctp1End = resolveIntUrlParam('sctp1end', INFINITY_TIMEOUT);
+        setTimeout(() => socketInstance.current.runDataChannelTest(sctp1End-sctp1Start, onDataTransferProgress), sctp1Start);
+
+        setTimeout(socketInstance.current.destroyConnection, Math.max(rtp1End, sctp1End));
     }
 
     const setTestTimeouts2 = () => {
         const rtp2Start = resolveIntUrlParam('rtp2start', INFINITY_TIMEOUT);
         const rtp2End = resolveIntUrlParam('rtp2end', INFINITY_TIMEOUT);
-
         setTimeout(startExtraVideoStream, rtp2Start);
         setTimeout(closeExtraVideo, rtp2End);
-        setTimeout(socketInstance2.current.destroyConnection, rtp2End);
-    }
 
-    const setTestTimeouts3 = () => {
-        const sctp1Start = resolveIntUrlParam('sctp1start', INFINITY_TIMEOUT);
-        const sctp1End = resolveIntUrlParam('sctp1end', INFINITY_TIMEOUT);
-        setTimeout(() => socketInstance3.current.runDataChannelTest(sctp1End-sctp1Start, onDataTransferProgress), sctp1Start);
-        setTimeout(socketInstance3.current.destroyConnection, sctp1End);
+        const sctp2Start = resolveIntUrlParam('sctp2start', INFINITY_TIMEOUT);
+        const sctp2End = resolveIntUrlParam('sctp2end', INFINITY_TIMEOUT);
+        setTimeout(() => socketInstance2.current.runDataChannelTest(sctp2End-sctp2Start, onDataTransferProgress), sctp2Start);
+
+        setTimeout(socketInstance2.current.destroyConnection, Math.max(rtp2End, sctp2End));
     }
 
     const handleFileInputChange = (event) => {
@@ -62,6 +65,7 @@ const RoomComponent = (props) => {
         socketInstance.current.startCamera()
             .then(stream => {
                 document.getElementById("local-media-container").srcObject = stream;
+                setSocket1Settings(getStreamSettings(stream));
             })
             .catch(err => {
                 console.log(`Starting local video failed: ${err}`);
@@ -98,7 +102,14 @@ const RoomComponent = (props) => {
             })
     }
 
+    const getStreamSettings = (stream) => {
+        const track = stream.getVideoTracks()[0];
+        return JSON.stringify(track.getSettings());
+    }
+
     const handleRemoteStream = streamObj => {
+        setRemoteStreamSettings(getStreamSettings(streamObj));
+
         console.log("Handling remote stream.");
         if (!document.getElementById("remote-media-container").srcObject) {
             document.getElementById("remote-media-container").srcObject = streamObj;
@@ -128,16 +139,17 @@ const RoomComponent = (props) => {
                     <tr>
                         <td>
                             <div>
-                                <video id="local-media-container" autoPlay width="640" height="480" ></video>
+                                <video id="local-media-container" autoPlay width="1280" height="720" ></video>
                                 <div>Local media#1</div>
                                 <button onClick={startMainVideo}>Start camera stream</button>
                                 <button onClick={startMainScreenShare}>Start screen share</button>
                                 <button onClick={closeMainVideo}>Close</button>
+                                <div>{socket1Settings}</div>
                             </div>
                         </td>
                         <td>
                             <div>
-                                <video id="remote-media-container" autoPlay width="640" height="480"></video>
+                                <video id="remote-media-container" autoPlay width="1280" height="720"></video>
                                 <div>Remote media#1</div>
                             </div>
                         </td>
@@ -145,7 +157,7 @@ const RoomComponent = (props) => {
                     <tr>
                         <td>
                             <div>
-                                <video id="local-media-container2" autoPlay width="640" height="480"></video>
+                                <video id="local-media-container2" autoPlay width="1280" height="720"></video>
                                 <div>Local media#2</div>
                                 <button onClick={startMainScreenShare}>Start screen share</button>
                                 <button onClick={startExtraVideoStream}>Start extra camera stream</button>
@@ -154,8 +166,9 @@ const RoomComponent = (props) => {
                         </td>
                         <td>
                             <div>
-                                <video id="remote-media-container2" autoPlay width="640" height="480"></video>
+                                <video id="remote-media-container2" autoPlay width="1280" height="720"></video>
                                 <div>Remote media#2</div>
+                                <div>{remoteStreamSettings}</div>
                             </div>
                         </td>
                     </tr>
