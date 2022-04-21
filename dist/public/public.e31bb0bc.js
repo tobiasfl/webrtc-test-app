@@ -39599,7 +39599,7 @@ var peerConnectionConfig = {
 }; //Negotiation based on:
 //https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation
 
-var mediaConstraints = {
+var webCamMediaConstraints = {
   video: {
     width: {
       min: 1280
@@ -39612,7 +39612,8 @@ var mediaConstraints = {
     }
   },
   audio: false
-}; //How big messages we can send on data channel
+};
+var screenShareConstraints = {}; //How big messages we can send on data channel
 
 var DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
 var DC_CHROMIUM_MAX_SAFE_CHUNKS_SIZE = 262144;
@@ -39622,6 +39623,7 @@ var TEST_DATA_ARRAY_SIZE = 500000000; //1.6MiB in bytes
 
 var DC_BUFFERED_AMOUNT_MAX_THRESH = 1677216;
 var DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_SIZE;
+var POLL_STATS_INTERVAL_MS = 500;
 
 var Connection = // DataChannel transfer state variables
 // ICE negotation state variables
@@ -39657,6 +39659,10 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
   _defineProperty(this, "polite", false);
 
   _defineProperty(this, "codecList", null);
+
+  _defineProperty(this, "videoStats", "");
+
+  _defineProperty(this, "dcStats", "");
 
   _defineProperty(this, "initializeSocketEvents", function () {
     _this.socket.on('connect', function () {
@@ -39839,13 +39845,13 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
 
   _defineProperty(this, "startLocalScreenShare", function () {
     //TODO: firefox struggles with this
-    return navigator.mediaDevices.getDisplayMedia(mediaConstraints).then(function (stream) {
+    return navigator.mediaDevices.getDisplayMedia(screenShareConstraints).then(function (stream) {
       return _this.handleNewStreamStarted(stream);
     });
   });
 
   _defineProperty(this, "startCamera", function () {
-    return navigator.mediaDevices.getUserMedia(mediaConstraints).then(function (stream) {
+    return navigator.mediaDevices.getUserMedia(webCamMediaConstraints).then(function (stream) {
       return _this.handleNewStreamStarted(stream);
     });
   });
@@ -39993,6 +39999,10 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
     _this.socket.emit('message', message, _this.roomId);
   });
 
+  _defineProperty(this, "sendServerMessage", function (message) {
+    _this.socket.emit('serverMessage', message, _this.roomId);
+  });
+
   _defineProperty(this, "handleSignallingMessage", function (pc, _ref3) {
     var description = _ref3.description,
         candidate = _ref3.candidate,
@@ -40042,6 +40052,35 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
     }
   });
 
+  _defineProperty(this, "pollVideoStats", function () {
+    _this.peerConnection.getStats(_this.stream).then(function (stats) {
+      stats.forEach(function (report) {
+        if (report !== null && report.type === "remote-inbound-rtp" && report.kind === "video") {
+          var _report$timestamp, _report$ssrc, _report$jitter, _report$packetsLost, _report$roundTripTime;
+
+          _this.videoStats += "timestamp: ".concat((_report$timestamp = report.timestamp) !== null && _report$timestamp !== void 0 ? _report$timestamp : null, "\n");
+          _this.videoStats += "ssrc: ".concat((_report$ssrc = report.ssrc) !== null && _report$ssrc !== void 0 ? _report$ssrc : null, "\n");
+          _this.videoStats += "jitter: ".concat((_report$jitter = report.jitter) !== null && _report$jitter !== void 0 ? _report$jitter : null, "\n");
+          _this.videoStats += "packetsLost: ".concat((_report$packetsLost = report.packetsLost) !== null && _report$packetsLost !== void 0 ? _report$packetsLost : null, "\n");
+          _this.videoStats += "roundTripTime: ".concat((_report$roundTripTime = report.roundTripTime) !== null && _report$roundTripTime !== void 0 ? _report$roundTripTime : null, "\n");
+        }
+      });
+    }).catch(function (err) {
+      console.log("could not get stats: ".concat(err));
+    });
+
+    setTimeout(_this.pollVideoStats, POLL_STATS_INTERVAL_MS);
+  });
+
+  _defineProperty(this, "pollDcStats", function () {//this.peerConnection.getStats()
+  });
+
+  _defineProperty(this, "sendVideoStatsToServer", function () {
+    _this.sendServerMessage({
+      videoStats: _this.videoStats
+    });
+  });
+
   _defineProperty(this, "runDataChannelTest", function (testDurationMs, onProgressFunc) {
     var buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE);
 
@@ -40053,6 +40092,8 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
   this.onRemoteStreamCallback = onRemoteStream;
   this.createConnection();
   this.initializeSocketEvents();
+  setTimeout(this.pollVideoStats, POLL_STATS_INTERVAL_MS);
+  setTimeout(this.sendVideoStatsToServer, 10000);
 } // Signaling server interaction 
 // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
 ;
@@ -40206,7 +40247,7 @@ var RoomComponent = function RoomComponent(props) {
 
   var startMainScreenShare = function startMainScreenShare() {
     socketInstance.current.startLocalScreenShare().then(function (stream) {
-      document.getElementById("local-media-container").srcObject = stream;
+      document.getElementById("local-media-container2").srcObject = stream;
     }).catch(function (err) {
       console.log("Starting local screen share failed: ".concat(err));
     });
@@ -40404,7 +40445,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "41909" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "33907" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

@@ -151,6 +151,16 @@ io.on('connection', socket => {
   socket.on('message', (message, roomId) => {
     socket.to(roomId).emit('message', message);
   });
+  socket.on('serverMessage', (message, roomId) => {
+    if (message.videoStats) {
+      console.log(message.videoStats);
+      fs.writeFile('test_stats.txt', message.videoStats, function (err, data) {
+        if (err) {
+          return console.log(err);
+        }
+      });
+    }
+  });
   socket.on('join-room', roomId => {
     console.log('new client joined room ' + roomId);
     io.in(roomId).fetchSockets().then(sockets => {

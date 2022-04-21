@@ -95,7 +95,7 @@ const RoomComponent = (props) => {
     const startMainScreenShare = () => {
         socketInstance.current.startLocalScreenShare()
             .then(stream => {
-                document.getElementById("local-media-container").srcObject = stream;
+                document.getElementById("local-media-container2").srcObject = stream;
             })
             .catch(err => {
                 console.log(`Starting local screen share failed: ${err}`);

@@ -11,13 +11,17 @@ const peerConnectionConfig = { iceServers: [{
 //https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation
 
 
-const mediaConstraints = {
+const webCamMediaConstraints = {
     video: {
         width: { min: 1280 },
         height: { min: 720 },
         frameRate: { min: 50 }
     }, 
-    audio: false};
+    audio: false
+};
+
+const screenShareConstraints = {
+};
 
 //How big messages we can send on data channel
 const DC_MINIMAL_SAFE_CHUNK_SIZE = 16384;
@@ -32,6 +36,7 @@ const TEST_DATA_ARRAY_SIZE = 500000000
 const DC_BUFFERED_AMOUNT_MAX_THRESH = 1677216;
 const DC_BUFFERED_AMOUNT_LOW_THRESH = DC_BUFFERED_AMOUNT_MAX_THRESH - DC_CHUNK_SIZE;
 
+const POLL_STATS_INTERVAL_MS = 500;
 
 class Connection {
     peerConnection = null;
@@ -56,12 +61,18 @@ class Connection {
 
     codecList = null;
 
+    videoStats = "";
+    dcStats = "";
+
     constructor(connectionId, onPeerConnected, onRemoteStream) {
         this.roomId = connectionId;
         this.onPeerConnectedCallback = onPeerConnected;
         this.onRemoteStreamCallback = onRemoteStream;
         this.createConnection();
         this.initializeSocketEvents();
+
+        setTimeout(this.pollVideoStats, POLL_STATS_INTERVAL_MS);
+        setTimeout(this.sendVideoStatsToServer, 10000);
     }
 
     // Signaling server interaction 
@@ -226,14 +237,14 @@ class Connection {
 
     startLocalScreenShare = () => {
         //TODO: firefox struggles with this
-        return navigator.mediaDevices.getDisplayMedia(mediaConstraints)
+        return navigator.mediaDevices.getDisplayMedia(screenShareConstraints)
            .then(stream => {
                return this.handleNewStreamStarted(stream);
            });
     }
 
     startCamera = () => {
-        return navigator.mediaDevices.getUserMedia(mediaConstraints)
+        return navigator.mediaDevices.getUserMedia(webCamMediaConstraints)
             .then(stream => {
                 return this.handleNewStreamStarted(stream);
             });
@@ -373,6 +384,10 @@ class Connection {
         this.socket.emit('message', message, this.roomId);
     }
 
+    sendServerMessage = (message) => {
+        this.socket.emit('serverMessage', message, this.roomId);
+    }
+
     handleSignallingMessage = (pc, {description, candidate, metadata, ready}) => {
         if (description || candidate) {
             try {
@@ -416,9 +431,39 @@ class Connection {
         else if (ready) {
             if(this.onPeerConnectedCallback) {
                 this.onPeerConnectedCallback();
+
             }
             console.log("OTHER PEER PRESENT");
         }
+    }
+
+    pollVideoStats = () => {
+        this.peerConnection.getStats(this.stream)
+            .then(stats => {
+
+                stats.forEach(report => {
+                    if (report !== null && report.type === "remote-inbound-rtp" && report.kind === "video") {
+                        this.videoStats += `timestamp: ${report.timestamp ?? null}\n`;
+                        this.videoStats += `ssrc: ${report.ssrc ?? null}\n`;
+                        this.videoStats += `jitter: ${report.jitter ?? null}\n`;
+                        this.videoStats += `packetsLost: ${report.packetsLost ?? null}\n`;
+                        this.videoStats += `roundTripTime: ${report.roundTripTime ?? null}\n`;
+                    }
+                });
+            })
+            .catch(err => {
+                console.log(`could not get stats: ${err}`)
+            });
+
+        setTimeout(this.pollVideoStats, POLL_STATS_INTERVAL_MS);
+    }
+
+    pollDcStats = () => {
+        //this.peerConnection.getStats()
+    }
+
+    sendVideoStatsToServer = () => {
+        this.sendServerMessage({videoStats:this.videoStats})
     }
 
     runDataChannelTest = (testDurationMs, onProgressFunc) => {
