@@ -32,9 +32,15 @@ io.on('connection', socket => {
     })
 
     socket.on('serverMessage', (message, roomId) => {
-        if (message.videoStats) {
-            console.log(message.videoStats);
-            fs.writeFile('test_stats.txt', message.videoStats, function (err, data) {
+        if (message.videoStats && message.videoStats.length > 0) {
+            fs.writeFile(roomId+'video_stats.txt', convertToCsv(message.videoStats), function (err, data) {
+                if (err) {
+                    return console.log(err);
+                }
+            });
+        }
+        if (message.dcStats && message.dcStats.length > 0) {
+            fs.writeFile(roomId+'data_channel_stats.txt', convertToCsv(message.dcStats), function (err, data) {
                 if (err) {
                     return console.log(err);
                 }
@@ -80,6 +86,14 @@ io.on('connection', socket => {
         console.log(`a user disconnected, total sockets remaining: ${io.of("/").sockets.size}`);
     });
 })
+
+const convertToCsv = (arr) => {
+    const array = [Object.keys(arr[0])].concat(arr);
+
+    return array.map(it => {
+        return Object.values(it).toString()
+    }).join('\n');
+}
 
 
 

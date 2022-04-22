@@ -39581,6 +39581,10 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.default = void 0;
 
+function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); if (enumerableOnly) { symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; }); } keys.push.apply(keys, symbols); } return keys; }
+
+function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i] != null ? arguments[i] : {}; if (i % 2) { ownKeys(Object(source), true).forEach(function (key) { _defineProperty(target, key, source[key]); }); } else if (Object.getOwnPropertyDescriptors) { Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)); } else { ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } } return target; }
+
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
@@ -39660,9 +39664,9 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
 
   _defineProperty(this, "codecList", null);
 
-  _defineProperty(this, "videoStats", "");
+  _defineProperty(this, "videoStats", []);
 
-  _defineProperty(this, "dcStats", "");
+  _defineProperty(this, "dcStats", []);
 
   _defineProperty(this, "initializeSocketEvents", function () {
     _this.socket.on('connect', function () {
@@ -39767,7 +39771,6 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
         senders.forEach(function (sender) {
           if (sender.track.kind === "video") {
             _this.codecList = sender.getParameters().codecs;
-            console.log(JSON.stringify(_this.codecList));
             return;
           }
         });
@@ -39853,25 +39856,6 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
   _defineProperty(this, "startCamera", function () {
     return navigator.mediaDevices.getUserMedia(webCamMediaConstraints).then(function (stream) {
       return _this.handleNewStreamStarted(stream);
-    });
-  });
-
-  _defineProperty(this, "setMaxBitrate", function (bitRate) {
-    var senderList = _this.peerConnection.getSenders();
-
-    senderList.forEach(function (sender) {
-      var params = sender.getParameters();
-
-      if (!params.encodings) {
-        params.encodings = [{}];
-      }
-
-      params.encodings[0].maxBitrate = bitRate;
-      sender.setParameters(params).then(function () {
-        console.log("Max bitrate set to: ".concat(bitRate));
-      }).catch(function (err) {
-        console.log("Setting max bitrate failed: ".concat(err));
-      });
     });
   });
 
@@ -40052,32 +40036,71 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
     }
   });
 
-  _defineProperty(this, "pollVideoStats", function () {
-    _this.peerConnection.getStats(_this.stream).then(function (stats) {
-      stats.forEach(function (report) {
-        if (report !== null && report.type === "remote-inbound-rtp" && report.kind === "video") {
-          var _report$timestamp, _report$ssrc, _report$jitter, _report$packetsLost, _report$roundTripTime;
+  _defineProperty(this, "pollStats", function () {
+    var rttToMs = function rttToMs(rtt) {
+      return rtt * 1000;
+    };
 
-          _this.videoStats += "timestamp: ".concat((_report$timestamp = report.timestamp) !== null && _report$timestamp !== void 0 ? _report$timestamp : null, "\n");
-          _this.videoStats += "ssrc: ".concat((_report$ssrc = report.ssrc) !== null && _report$ssrc !== void 0 ? _report$ssrc : null, "\n");
-          _this.videoStats += "jitter: ".concat((_report$jitter = report.jitter) !== null && _report$jitter !== void 0 ? _report$jitter : null, "\n");
-          _this.videoStats += "packetsLost: ".concat((_report$packetsLost = report.packetsLost) !== null && _report$packetsLost !== void 0 ? _report$packetsLost : null, "\n");
-          _this.videoStats += "roundTripTime: ".concat((_report$roundTripTime = report.roundTripTime) !== null && _report$roundTripTime !== void 0 ? _report$roundTripTime : null, "\n");
+    var calculateKiloBitsPerSec = function calculateKiloBitsPerSec(prevBytesTotal, currBytesTotal, prevTimestamp, currTimestamp) {
+      var bytesSent = currBytesTotal - prevBytesTotal;
+      var timeDifferenceSeconds = (currTimestamp - prevTimestamp) / 1000.0;
+      var bytesPerSecond = bytesSent / timeDifferenceSeconds;
+      return bytesPerSecond * 8 / 1000;
+    };
+
+    _this.peerConnection.getStats(_this.stream).then(function (stats) {
+      var combinedReport = {};
+      stats.forEach(function (report) {
+        if (report.type === "remote-inbound-rtp" && report.kind === "video") {
+          combinedReport = _objectSpread(_objectSpread({}, combinedReport), {}, {
+            fractionLost: report.fractionLost,
+            timestamp: report.timestamp,
+            ssrc: report.ssrc,
+            jitter: report.jitter,
+            packetsLost: report.packetsLost,
+            roundTripTime: rttToMs(report.roundTripTime)
+          });
+        } else if (report.type === "outbound-rtp" && report.kind === "video") {
+          combinedReport = _objectSpread(_objectSpread({}, combinedReport), {}, {
+            bytesSent: report.bytesSent,
+            bytesSentTimestamp: report.timestamp
+          });
+          /*if (this.videoStats.length > 0) {
+              const prev = this.videoStats[this.videoStats.length-1]
+              const kbps = calculateKiloBitsPerSec(prev.bytesSent, report.bytesSent, prev.bytesSentTimestamp, report.timestamp);
+              combinedReport = {...combinedReport,
+                  kbps: kbps
+              };                           
+          }
+          else {
+               combinedReport = {...combinedReport,
+                  kbps: 0
+              };                           
+          }*/
+        } else if (report.type === "data-channel") {
+          _this.dcStats.push({
+            timestamp: report.timestamp,
+            bytesSent: report.bytesSent
+          });
         }
       });
+
+      if (combinedReport.ssrc && combinedReport.bytesSent) {
+        _this.videoStats.push(combinedReport);
+      }
     }).catch(function (err) {
       console.log("could not get stats: ".concat(err));
     });
 
-    setTimeout(_this.pollVideoStats, POLL_STATS_INTERVAL_MS);
+    setTimeout(_this.pollStats, POLL_STATS_INTERVAL_MS);
   });
 
-  _defineProperty(this, "pollDcStats", function () {//this.peerConnection.getStats()
-  });
+  _defineProperty(this, "sendStatsToServer", function () {
+    console.log("sending stats to server");
 
-  _defineProperty(this, "sendVideoStatsToServer", function () {
     _this.sendServerMessage({
-      videoStats: _this.videoStats
+      videoStats: _this.videoStats,
+      dcStats: _this.dcStats
     });
   });
 
@@ -40092,8 +40115,7 @@ function Connection(connectionId, onPeerConnected, onRemoteStream) {
   this.onRemoteStreamCallback = onRemoteStream;
   this.createConnection();
   this.initializeSocketEvents();
-  setTimeout(this.pollVideoStats, POLL_STATS_INTERVAL_MS);
-  setTimeout(this.sendVideoStatsToServer, 10000);
+  setTimeout(this.pollStats, POLL_STATS_INTERVAL_MS);
 } // Signaling server interaction 
 // Three cases: created (initiator), join (new joined), joined (joined existing), full (rejected)
 ;
@@ -40176,8 +40198,8 @@ var RoomComponent = function RoomComponent(props) {
       setDataTransfersProgress = _useState12[1];
 
   (0, _react.useEffect)(function () {
-    socketInstance.current = new _connection.default('pc1', setTestTimeouts, handleRemoteStream);
-    socketInstance2.current = new _connection.default('pc2', setTestTimeouts2, handleRemoteStream);
+    socketInstance.current = new _connection.default('1', setTestTimeouts, handleRemoteStream);
+    socketInstance2.current = new _connection.default('2', setTestTimeouts2, handleRemoteStream);
   }, []);
 
   var setTestTimeouts = function setTestTimeouts() {
@@ -40190,7 +40212,9 @@ var RoomComponent = function RoomComponent(props) {
     setTimeout(function () {
       return socketInstance.current.runDataChannelTest(sctp1End - sctp1Start, onDataTransferProgress);
     }, sctp1Start);
-    setTimeout(socketInstance.current.destroyConnection, Math.max(rtp1End, sctp1End));
+    setTimeout(function () {
+      return socketInstance.current.sendStatsToServer();
+    }, endTime());
   };
 
   var setTestTimeouts2 = function setTestTimeouts2() {
@@ -40203,7 +40227,19 @@ var RoomComponent = function RoomComponent(props) {
     setTimeout(function () {
       return socketInstance2.current.runDataChannelTest(sctp2End - sctp2Start, onDataTransferProgress);
     }, sctp2Start);
-    setTimeout(socketInstance2.current.destroyConnection, Math.max(rtp2End, sctp2End));
+    setTimeout(function () {
+      return socketInstance2.current.sendStatsToServer();
+    }, endTime());
+  };
+
+  var endTime = function endTime() {
+    var rtp1End = (0, _configHelper.resolveIntUrlParam)('rtp1end', 0);
+    var sctp1End = (0, _configHelper.resolveIntUrlParam)('sctp1end', 0);
+    var rtp2End = (0, _configHelper.resolveIntUrlParam)('rtp2end', 0);
+    var sctp2End = (0, _configHelper.resolveIntUrlParam)('sctp2end', 0);
+    var maxTime = Math.max(rtp1End, sctp1End, rtp2End, sctp2End); //To make sure receiver never sends report
+
+    return maxTime === 0 ? INFINITY_TIMEOUT : maxTime;
   };
 
   var handleFileInputChange = function handleFileInputChange(event) {
@@ -40445,7 +40481,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "33907" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "32849" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

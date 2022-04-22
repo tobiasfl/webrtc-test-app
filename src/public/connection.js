@@ -61,8 +61,8 @@ class Connection {
 
     codecList = null;
 
-    videoStats = "";
-    dcStats = "";
+    videoStats = [];
+    dcStats = [];
 
     constructor(connectionId, onPeerConnected, onRemoteStream) {
         this.roomId = connectionId;
@@ -71,8 +71,7 @@ class Connection {
         this.createConnection();
         this.initializeSocketEvents();
 
-        setTimeout(this.pollVideoStats, POLL_STATS_INTERVAL_MS);
-        setTimeout(this.sendVideoStatsToServer, 10000);
+        setTimeout(this.pollStats, POLL_STATS_INTERVAL_MS);
     }
 
     // Signaling server interaction 
@@ -162,7 +161,6 @@ class Connection {
                 senders.forEach((sender) => {
                     if (sender.track.kind === "video") {
                         this.codecList = sender.getParameters().codecs;
-                        console.log(JSON.stringify(this.codecList));
                         return;
                     }
                 })
@@ -248,27 +246,6 @@ class Connection {
             .then(stream => {
                 return this.handleNewStreamStarted(stream);
             });
-    }
-
-    //BUG: This one is not working at the moment
-    setMaxBitrate = (bitRate) => {
-        const senderList = this.peerConnection.getSenders();
-        senderList.forEach(sender => {
-            const params = sender.getParameters();
-
-            if (!params.encodings) {
-                params.encodings = [{}];
-            }
-
-            params.encodings[0].maxBitrate = bitRate;
-            sender.setParameters(params)
-                .then(() => {
-                    console.log(`Max bitrate set to: ${bitRate}`);
-                })
-                .catch(err => {
-                    console.log(`Setting max bitrate failed: ${err}`)
-                });
-        });
     }
 
     handleNewStreamStarted = (stream) => {
@@ -437,39 +414,80 @@ class Connection {
         }
     }
 
-    pollVideoStats = () => {
+    pollStats = () => {
+        const rttToMs = (rtt) => rtt*1000;
+        const calculateKiloBitsPerSec = (prevBytesTotal, currBytesTotal, prevTimestamp, currTimestamp) => {
+            const bytesSent = currBytesTotal - prevBytesTotal;
+            const timeDifferenceSeconds = (currTimestamp - prevTimestamp) / 1000.0;
+            const bytesPerSecond = bytesSent / timeDifferenceSeconds;
+            return bytesPerSecond * 8 / 1000;
+        };
+
         this.peerConnection.getStats(this.stream)
             .then(stats => {
-
+                let combinedReport = {};
                 stats.forEach(report => {
-                    if (report !== null && report.type === "remote-inbound-rtp" && report.kind === "video") {
-                        this.videoStats += `timestamp: ${report.timestamp ?? null}\n`;
-                        this.videoStats += `ssrc: ${report.ssrc ?? null}\n`;
-                        this.videoStats += `jitter: ${report.jitter ?? null}\n`;
-                        this.videoStats += `packetsLost: ${report.packetsLost ?? null}\n`;
-                        this.videoStats += `roundTripTime: ${report.roundTripTime ?? null}\n`;
+                    if (report.type === "remote-inbound-rtp" && report.kind === "video") {
+                        combinedReport = {...combinedReport,
+                            fractionLost: report.fractionLost,
+                            timestamp: report.timestamp,
+                            ssrc: report.ssrc,
+                            jitter: report.jitter,
+                            packetsLost: report.packetsLost,
+                            roundTripTime: rttToMs(report.roundTripTime)
+                        };
                     }
+                    else if (report.type === "outbound-rtp" && report.kind === "video") {
+                        combinedReport = {...combinedReport,
+                            bytesSent: report.bytesSent,
+                            bytesSentTimestamp: report.timestamp
+                        };
+
+                        /*if (this.videoStats.length > 0) {
+                            const prev = this.videoStats[this.videoStats.length-1]
+                            const kbps = calculateKiloBitsPerSec(prev.bytesSent, report.bytesSent, prev.bytesSentTimestamp, report.timestamp);
+                            combinedReport = {...combinedReport,
+                                kbps: kbps
+                            };                           
+                        }
+                        else {
+                             combinedReport = {...combinedReport,
+                                kbps: 0
+                            };                           
+                        }*/
+                    }
+                    else if (report.type === "data-channel") {
+                        this.dcStats.push({
+                            timestamp: report.timestamp,
+                            bytesSent: report.bytesSent
+                        })
+                    }
+
                 });
+                if (combinedReport.ssrc && combinedReport.bytesSent) {
+                    this.videoStats.push(combinedReport);
+                }
             })
             .catch(err => {
                 console.log(`could not get stats: ${err}`)
             });
 
-        setTimeout(this.pollVideoStats, POLL_STATS_INTERVAL_MS);
+        setTimeout(this.pollStats, POLL_STATS_INTERVAL_MS);
     }
 
-    pollDcStats = () => {
-        //this.peerConnection.getStats()
-    }
-
-    sendVideoStatsToServer = () => {
-        this.sendServerMessage({videoStats:this.videoStats})
+    sendStatsToServer = () => {
+        console.log("sending stats to server");
+        this.sendServerMessage({
+            videoStats:this.videoStats,
+            dcStats:this.dcStats
+        });
     }
 
     runDataChannelTest = (testDurationMs, onProgressFunc) => {
         const buffer = new ArrayBuffer(TEST_DATA_ARRAY_SIZE); 
         this.sendData(new File([buffer], 'testTransfer.txt'), testDurationMs, onProgressFunc, this.peerConnection)
     }
+
 }
 
 export default Connection;

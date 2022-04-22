@@ -19,8 +19,8 @@ const RoomComponent = (props) => {
     const [dataTransfersProgress, setDataTransfersProgress] = useState({});
 
     useEffect(() => {
-        socketInstance.current = new Connection('pc1', setTestTimeouts, handleRemoteStream);
-        socketInstance2.current = new Connection('pc2', setTestTimeouts2, handleRemoteStream);
+        socketInstance.current = new Connection('1', setTestTimeouts, handleRemoteStream);
+        socketInstance2.current = new Connection('2', setTestTimeouts2, handleRemoteStream);
     }, []);
 
     const setTestTimeouts = () => {
@@ -33,7 +33,7 @@ const RoomComponent = (props) => {
         const sctp1End = resolveIntUrlParam('sctp1end', INFINITY_TIMEOUT);
         setTimeout(() => socketInstance.current.runDataChannelTest(sctp1End-sctp1Start, onDataTransferProgress), sctp1Start);
 
-        setTimeout(socketInstance.current.destroyConnection, Math.max(rtp1End, sctp1End));
+        setTimeout(() => socketInstance.current.sendStatsToServer(), endTime());
     }
 
     const setTestTimeouts2 = () => {
@@ -46,7 +46,17 @@ const RoomComponent = (props) => {
         const sctp2End = resolveIntUrlParam('sctp2end', INFINITY_TIMEOUT);
         setTimeout(() => socketInstance2.current.runDataChannelTest(sctp2End-sctp2Start, onDataTransferProgress), sctp2Start);
 
-        setTimeout(socketInstance2.current.destroyConnection, Math.max(rtp2End, sctp2End));
+        setTimeout(() => socketInstance2.current.sendStatsToServer(), endTime());
+    }
+
+    const endTime = () => {
+        const rtp1End = resolveIntUrlParam('rtp1end', 0);
+        const sctp1End = resolveIntUrlParam('sctp1end', 0);
+        const rtp2End = resolveIntUrlParam('rtp2end', 0);
+        const sctp2End = resolveIntUrlParam('sctp2end', 0);
+        const maxTime = Math.max(rtp1End, sctp1End, rtp2End, sctp2End);
+        //To make sure receiver never sends report
+        return maxTime === 0 ? INFINITY_TIMEOUT : maxTime;
     }
 
     const handleFileInputChange = (event) => {
