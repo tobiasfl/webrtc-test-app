@@ -95,7 +95,4 @@ const convertToCsv = (arr) => {
     }).join('\n');
 }
 
-
-
-
 module.exports = server;
